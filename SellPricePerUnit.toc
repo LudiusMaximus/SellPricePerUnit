@@ -1,0 +1,9 @@
+## Interface: 80200
+## Title: SellPricePerUnit
+## Author: LudiusMaximus
+## Notes: Adds "Sell price per unit" to the tooltip of item stacks.
+## Version: 1.0
+## X-Donate: PayPal:ludiusmaximus@gmail.com
+## X-License: The MIT License (MIT)
+
+main.lua
