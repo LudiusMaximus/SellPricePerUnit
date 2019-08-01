@@ -20,15 +20,15 @@ local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
 local originalGetItem = GameTooltip.GetItem
 GameTooltip:HookScript("OnHide", function(self)
   GameTooltip.GetItem = originalGetItem
+  
+  stackCount = nil
 end)
 
 
-
--- TODO: This is not working for recipes that do not produce an item...
-local skipNextRecipeCall = true
-
-
-
+-- When Bagnon displays the item slots of other characters, focusFrame.count
+-- can only be obained for the first call of OnTooltipSetItem().
+-- That's why we store it in this variable.
+local stackCount = nil
 
 GameTooltip:HookScript("OnTooltipSetItem", function(self)
 
@@ -41,30 +41,18 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
   
   if itemStackCount == nil or itemStackCount == 1 or itemSellPrice == 0 then return end
   
-  
-  -- TODO: This is not working for recipes that do not produce an item...
-  if (itemTypeId == LE_ITEM_CLASS_RECIPE) then
-    if skipNextRecipeCall then
-      skipNextRecipeCall = false
-      return
-    else
-      skipNextRecipeCall = true
-    end
-  end
-  
   -- Get the number of items in stack.
   -- Inspired by: https://www.wowinterface.com/downloads/info25078-BetterVendorPrice.html
   local focusFrame = GetMouseFocus()
-  if not focusFrame then return end
+  if focusFrame and focusFrame.count then
+    stackCount = focusFrame.count
+  end
+  if not stackCount then return end
   
-  local count = tonumber(focusFrame.count) or 1
-  if count <= 1 then return end
-
 
   -- The money frame is anchored to a blank line of the tootlip.
-  -- Find out which line it is and how much money is displayed.
+  -- Find out which line it is.
   local moneyFrameLineNumber = nil
-  local money = nil
   
   -- Check all shown money frames of the tooltip.
   -- (There is normally only one, except other addons have added more.)
@@ -78,15 +66,20 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
       
       -- Get line number and amount of money.
       moneyFrameLineNumber = tonumber(string_match(moneyFrameAnchor:GetName(), self:GetName().."TextLeft(%d+)"))
-      money = _G[moneyFrameName].staticMoney
+      
+      -- We could take the total money value of the stack from _G[moneyFrameName].staticMoney
+      -- but when Bagnon displays the items of other characters, it only shows the price of a
+      -- single item even for stacks. That's why we are calculating itemSellPrice*stackCount.
 
       break
     end
     
   end
 
+
   if not moneyFrameLineNumber then return end
-  
+
+
   -- Store all text and text colours of the original tooltip lines.
   -- TODO: Unfortunately I do not know how to store the "indented word wrap".
   --       Therefore, we have to put wrap=true for all lines in the new tooltip.
@@ -131,7 +124,7 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
   
   end
   
-  SetTooltipMoney(self, money, nil, string_format("%s:", SELL_PRICE))
+  SetTooltipMoney(self, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
   SetTooltipMoney(self, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
   
   for i = moneyFrameLineNumber+1, numLines, 1 do
