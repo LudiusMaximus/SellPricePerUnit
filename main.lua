@@ -36,7 +36,7 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
 
   local name, link = self:GetItem()
     
-  local _, _, _, _, _, _, _, itemStackCount, _, _, itemSellPrice, itemTypeId = GetItemInfo(link)
+  local _, _, _, _, _, _, _, itemStackCount, _, _, itemSellPrice = GetItemInfo(link)
   
   
   if itemStackCount == nil or itemStackCount == 1 or itemSellPrice == 0 then return end
