@@ -47,7 +47,7 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
   if focusFrame and focusFrame.count then
     stackCount = focusFrame.count
   end
-  if not stackCount then return end
+  if not stackCount or stackCount <= 1 then return end
   
 
   -- The money frame is anchored to a blank line of the tootlip.
