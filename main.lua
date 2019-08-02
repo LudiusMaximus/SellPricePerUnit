@@ -17,10 +17,10 @@ local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
 
 -- Have to override GameTooltip.GetItem() after calling ClearLines().
 -- This will restore the original after the tooltip is closed.
+-- We also reset the stored stackCount variable.
 local originalGetItem = GameTooltip.GetItem
 GameTooltip:HookScript("OnHide", function(self)
   GameTooltip.GetItem = originalGetItem
-  
   stackCount = nil
 end)
 
@@ -64,7 +64,7 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
     if _G[moneyFrameName.."PrefixText"]:GetText() == string_format("%s:", SELL_PRICE) then
       local _, moneyFrameAnchor = _G[moneyFrameName]:GetPoint(1)
       
-      -- Get line number and amount of money.
+      -- Get line number.
       moneyFrameLineNumber = tonumber(string_match(moneyFrameAnchor:GetName(), self:GetName().."TextLeft(%d+)"))
       
       -- We could take the total money value of the stack from _G[moneyFrameName].staticMoney
