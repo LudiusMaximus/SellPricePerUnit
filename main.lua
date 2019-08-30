@@ -15,6 +15,13 @@ local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
 
 
 
+-- When Bagnon displays the item slots of other characters, focusFrame.count
+-- can only be obained for the first call of OnTooltipSetItem().
+-- That's why we store it in this variable.
+local stackCount = nil
+
+
+
 -- Have to override GameTooltip.GetItem() after calling ClearLines().
 -- This will restore the original after the tooltip is closed.
 -- We also reset the stored stackCount variable.
@@ -37,11 +44,6 @@ end
 
 
 
-
--- When Bagnon displays the item slots of other characters, focusFrame.count
--- can only be obained for the first call of OnTooltipSetItem().
--- That's why we store it in this variable.
-local stackCount = nil
 
 GameTooltip:HookScript("OnTooltipSetItem", function(self)
 
