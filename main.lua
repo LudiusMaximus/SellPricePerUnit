@@ -25,6 +25,19 @@ GameTooltip:HookScript("OnHide", function(self)
 end)
 
 
+
+local function AddLineOrDoubleLine(tooltip, leftText, rightText, leftTextR, leftTextG, leftTextB, rightTextR, rightTextG, rightTextB, intendedWordWrap)
+  if rightText then
+    tooltip:AddDoubleLine(leftText, rightText, leftTextR, leftTextG, leftTextB, rightTextR, rightTextG, rightTextB)
+  else
+    tooltip:AddLine(leftText, leftTextR, leftTextG, leftTextB, intendedWordWrap)
+  end
+end
+
+
+
+
+
 -- When Bagnon displays the item slots of other characters, focusFrame.count
 -- can only be obained for the first call of OnTooltipSetItem().
 -- That's why we store it in this variable.
@@ -113,32 +126,20 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
   -- to learn which item is displayed. Will be restored after GameTooltip:OnHide() (see above).
   self.GetItem = function(self) return name, link end
 
+
+  -- Never word wrap the title line!
+  AddLineOrDoubleLine(self, leftText[1], rightText[1], leftTextR[1], leftTextG[1], leftTextB[1], rightTextR[1], rightTextG[1], rightTextB[1], false)
+
   -- Refill the tooltip with the stored lines plus the new "per unit" money frame.
-  for i = 1, moneyFrameLineNumber-1, 1 do
-
-    if rightText[i] then
-      self:AddDoubleLine(leftText[i], rightText[i], leftTextR[i], leftTextG[i], leftTextB[i], rightTextR[i], rightTextG[i], rightTextB[i])
-    else
-      -- TODO: Unfortunately I do not know how to store the "indented word wrap".
-      --       Therefore, we have to put wrap=true for all lines in the new tooltip.
-      self:AddLine(leftText[i], leftTextR[i], leftTextG[i], leftTextB[i], true)
-    end
-
+  for i = 2, moneyFrameLineNumber-1, 1 do
+    AddLineOrDoubleLine(self, leftText[i], rightText[i], leftTextR[i], leftTextG[i], leftTextB[i], rightTextR[i], rightTextG[i], rightTextB[i], true)
   end
 
   SetTooltipMoney(self, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
   SetTooltipMoney(self, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
 
   for i = moneyFrameLineNumber+1, numLines, 1 do
-
-    if rightText[i] then
-      self:AddDoubleLine(leftText[i], rightText[i], leftTextR[i], leftTextG[i], leftTextB[i], rightTextR[i], rightTextG[i], rightTextB[i])
-    else
-      -- TODO: Unfortunately I do not know how to store the "indented word wrap".
-      --       Therefore, we have to put wrap=true for all lines in the new tooltip.
-      self:AddLine(leftText[i], leftTextR[i], leftTextG[i], leftTextB[i], true)
-    end
-
+    AddLineOrDoubleLine(self, leftText[i], rightText[i], leftTextR[i], leftTextG[i], leftTextB[i], rightTextR[i], rightTextG[i], rightTextB[i], true)
   end
 
 end
