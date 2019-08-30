@@ -9,26 +9,16 @@ local GameTooltip = _G.GameTooltip
 local GetItemInfo = _G.GetItemInfo
 local GetMouseFocus = _G.GetMouseFocus
 
-local LE_ITEM_CLASS_RECIPE = _G.LE_ITEM_CLASS_RECIPE
 local SELL_PRICE = _G.SELL_PRICE
 local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
 
 
 
--- When Bagnon displays the item slots of other characters, focusFrame.count
--- can only be obained for the first call of OnTooltipSetItem().
--- That's why we store it in this variable.
-local stackCount = nil
-
-
-
 -- Have to override GameTooltip.GetItem() after calling ClearLines().
 -- This will restore the original after the tooltip is closed.
--- We also reset the stored stackCount variable.
 local originalGetItem = GameTooltip.GetItem
 GameTooltip:HookScript("OnHide", function(self)
   GameTooltip.GetItem = originalGetItem
-  stackCount = nil
 end)
 
 
@@ -58,11 +48,16 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
 
   if itemStackCount == nil or itemStackCount == 1 or itemSellPrice == 0 then return end
 
+
   -- Get the number of items in stack.
   -- Inspired by: https://www.wowinterface.com/downloads/info25078-BetterVendorPrice.html
+  local stackCount = nil
   local focusFrame = GetMouseFocus()
   if focusFrame and focusFrame.count then
     stackCount = focusFrame.count
+  -- Needed for Bagnon cached Bagnon items.
+  elseif focusFrame:GetParent() and focusFrame:GetParent().count then
+    stackCount = focusFrame:GetParent().count
   end
   if not stackCount or stackCount <= 1 then return end
 
