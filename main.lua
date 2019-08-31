@@ -12,10 +12,14 @@ local tonumber = tonumber
 local GameTooltip = _G.GameTooltip
 local GetItemInfo = _G.GetItemInfo
 local GetMouseFocus = _G.GetMouseFocus
+local MerchantFrame = _G.MerchantFrame
 
-local SELL_PRICE = _G.SELL_PRICE
+
 local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
-
+local ITEM_UNSELLABLE = _G.ITEM_UNSELLABLE
+local LE_ITEM_CLASS_RECIPE = _G.LE_ITEM_CLASS_RECIPE
+local LOCKED_WITH_ITEM = _G.LOCKED_WITH_ITEM
+local SELL_PRICE = _G.SELL_PRICE
 
 
 -- I have to set my hook after all other tooltip addons.
@@ -31,12 +35,6 @@ end)
 
 
 
--- Have to override GameTooltip.GetItem() after calling ClearLines().
--- This will restore the original after the tooltip is closed.
-local originalGetItem = GameTooltip.GetItem
-GameTooltip:HookScript("OnHide", function(self)
-  GameTooltip.GetItem = originalGetItem
-end)
 
 
 
@@ -47,6 +45,35 @@ local function AddLineOrDoubleLine(tooltip, leftText, rightText, leftTextR, left
     tooltip:AddLine(leftText, leftTextR, leftTextG, leftTextB, intendedWordWrap)
   end
 end
+
+
+
+
+
+
+-- When I want to give the vendor money frame a label, this gets
+-- mysteriously removed again. I could not trace down which function
+-- is responsible, only that it happens between GameTooltip_ClearMoney
+-- and MoneyFrame_UpdateMoney. This is why I am hooking the latter to
+-- restore the label everytime.
+local moneyFrameToLabel = nil
+
+hooksecurefunc("MoneyFrame_UpdateMoney", function(...)
+
+  local moneyFrame = ...
+  
+  if moneyFrame and moneyFrameToLabel and moneyFrame == moneyFrameToLabel then
+    moneyFramePrefixText = _G[moneyFrame:GetName().."PrefixText"];
+    if moneyFramePrefixText:GetText() == nil then
+      moneyFramePrefixText:SetText(string.format("%s:", SELL_PRICE))
+      local _, moneyFrameAnchor = moneyFrame:GetPoint(1)
+      moneyFrame:SetPoint("LEFT", moneyFrameAnchor:GetName(), "LEFT", 4, 0);
+    end
+  end  
+
+end)
+
+
 
 
 
@@ -81,7 +108,6 @@ local function AddSellPrice(tooltip)
   
   local merchantFrameOpen = MerchantFrame and MerchantFrame:IsShown()
 
-
   -- If the item has no sell price, we can stop here.
   -- If necessary, we add the "No sell price" label.
   if itemSellPrice == 0 then
@@ -92,9 +118,39 @@ local function AddSellPrice(tooltip)
   end
 
 
-   -- If there is no money frame yet, put it there!
+  -- If there is no money frame yet, put it there!
   if not tooltip.shownMoneyFrames then 
     SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+  -- If there already is the game's label-less vendor money frame, we want to replace it with the labelled one..
+  elseif merchantFrameOpen then
+    
+    -- Identify the correct money frame.
+    for i = 1, tooltip.shownMoneyFrames, 1 do
+    
+      local moneyFrame = _G[tooltip:GetName().."MoneyFrame"..i] 
+      local moneyFramePrefixText = _G[tooltip:GetName().."MoneyFrame"..i.."PrefixText"] 
+    
+      if moneyFramePrefixText:GetText() == nil then
+       
+        moneyFramePrefixText:SetText(string.format("%s:", SELL_PRICE))
+        local _, moneyFrameAnchor = moneyFrame:GetPoint(1)
+        moneyFrame:SetPoint("LEFT", moneyFrameAnchor:GetName(), "LEFT", 4, 0);
+        
+        
+        moneyFrameToLabel = moneyFrame
+        
+        break
+      end
+    end
+  end
+
+
+
+  -- If the stackCount is 1, we do not do anyhting else.
+  -- Particularly, because tooltip:ClearLines() breaks the SHIFT
+  -- comparison to currently equipped.
+  if stackCount == 1 then
+    return
   end
 
 
@@ -260,3 +316,17 @@ function L:initCode()
   end)
 
 end
+
+
+
+
+
+-- Have to override GameTooltip.GetItem() after calling ClearLines().
+-- This will restore the original after the tooltip is closed.
+local originalGetItem = GameTooltip.GetItem
+GameTooltip:HookScript("OnHide", function(self)
+  GameTooltip.GetItem = originalGetItem
+  
+  moneyFrameToLabel = nil
+end)
+
