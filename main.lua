@@ -86,7 +86,11 @@ local function AddSellPrice(tooltip)
   -- Just to be on the safe side...
   if not name or not link then return end
 
-  local _, _, _, _, _, _, _, itemStackCount, _, _, itemSellPrice = GetItemInfo(link)
+  local _, _, _, _, _, _, _, _, _, _, itemSellPrice = GetItemInfo(link)
+
+  -- GetItemInfo() may return nil sometimes.
+  -- https://wow.gamepedia.com/API_GetItemInfo
+  if itemSellPrice == nil then return end
 
 
   -- Get the number of items in stack.
