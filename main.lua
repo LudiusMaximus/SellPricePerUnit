@@ -105,7 +105,8 @@ local function AddSellPrice(tooltip)
   end
   -- In the TradeSkill window you cannot get stack counts like this.
   -- But mostly you have no stacks shown there... TODO (?)
-  if not stackCount then
+  -- Also when you are hovering over the buff icon of a buff like "Rockbiter Weapon" you get a table for stackCounter...
+  if not stackCount or type(stackCount) ~= "number" then
     stackCount = 1
   end
   
