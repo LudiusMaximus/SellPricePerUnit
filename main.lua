@@ -61,7 +61,7 @@ local moneyFrameToLabel = nil
 hooksecurefunc("MoneyFrame_UpdateMoney", function(...)
 
   local moneyFrame = ...
-  
+
   if moneyFrame and moneyFrameToLabel and moneyFrame == moneyFrameToLabel then
     moneyFramePrefixText = _G[moneyFrame:GetName().."PrefixText"];
     if moneyFramePrefixText:GetText() == nil then
@@ -69,7 +69,7 @@ hooksecurefunc("MoneyFrame_UpdateMoney", function(...)
       local _, moneyFrameAnchor = moneyFrame:GetPoint(1)
       moneyFrame:SetPoint("LEFT", moneyFrameAnchor:GetName(), "LEFT", 4, 0);
     end
-  end  
+  end
 
 end)
 
@@ -105,12 +105,13 @@ local function AddSellPrice(tooltip)
   end
   -- In the TradeSkill window you cannot get stack counts like this.
   -- But mostly you have no stacks shown there... TODO (?)
-  -- Also when you are hovering over the buff icon of a buff like "Rockbiter Weapon" you get a table for stackCounter...
-  if not stackCount or type(stackCount) ~= "number" then
+  -- Also when you are hovering over the buff icon of a buff like "Rockbiter Weapon" you get a table for stackCounter.
+  -- And for equipped bags you get stackCount == 0.
+  if not stackCount or type(stackCount) ~= "number" or stackCount == 0 then
     stackCount = 1
   end
-  
-  
+
+
   local merchantFrameOpen = MerchantFrame and MerchantFrame:IsShown()
 
   -- If the item has no sell price, we can stop here.
@@ -124,26 +125,26 @@ local function AddSellPrice(tooltip)
 
 
   -- If there is no money frame yet, put it there!
-  if not tooltip.shownMoneyFrames then 
+  if not tooltip.shownMoneyFrames then
     SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
   -- If there already is the game's label-less vendor money frame, we want to replace it with the labelled one..
   elseif merchantFrameOpen then
-    
+
     -- Identify the correct money frame.
     for i = 1, tooltip.shownMoneyFrames, 1 do
-    
-      local moneyFrame = _G[tooltip:GetName().."MoneyFrame"..i] 
-      local moneyFramePrefixText = _G[tooltip:GetName().."MoneyFrame"..i.."PrefixText"] 
-    
+
+      local moneyFrame = _G[tooltip:GetName().."MoneyFrame"..i]
+      local moneyFramePrefixText = _G[tooltip:GetName().."MoneyFrame"..i.."PrefixText"]
+
       if moneyFramePrefixText:GetText() == nil then
-       
+
         moneyFramePrefixText:SetText(string.format("%s:", SELL_PRICE))
         local _, moneyFrameAnchor = moneyFrame:GetPoint(1)
         moneyFrame:SetPoint("LEFT", moneyFrameAnchor:GetName(), "LEFT", 4, 0);
-        
-        
+
+
         moneyFrameToLabel = moneyFrame
-        
+
         break
       end
     end
@@ -177,7 +178,7 @@ local function AddSellPrice(tooltip)
     -- If the money frame's PrefixText is SELL_PRICE, we assume it is the one we are looking for.
     -- In classic the vendor price is shown without "Sell Price:" while at the vendor.
     if _G[moneyFrameName.."PrefixText"]:GetText() == nil or _G[moneyFrameName.."PrefixText"]:GetText() == string_format("%s:", SELL_PRICE) then
-    
+
       local _, moneyFrameAnchor = _G[moneyFrameName]:GetPoint(1)
 
       -- Get line number.
@@ -193,12 +194,13 @@ local function AddSellPrice(tooltip)
   end
 
   if not moneyFrameLineNumber then
-    return  
+    return
   end
 
 
+
   -- Store all text and text colours of the original tooltip lines.
-  -- TODO: Unfortunately I do not know how to store the "indented word wrap".
+  -- TODO: Unfortunately I do not know how to store the "intended word wrap".
   --       Therefore, we have to put wrap=true for all lines in the new tooltip.
   local leftText = {}
   local leftTextR = {}
@@ -236,7 +238,7 @@ local function AddSellPrice(tooltip)
   for i = 2, moneyFrameLineNumber-1, 1 do
     AddLineOrDoubleLine(tooltip, leftText[i], rightText[i], leftTextR[i], leftTextG[i], leftTextB[i], rightTextR[i], rightTextG[i], rightTextB[i], true)
   end
-  
+
   SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
   if stackCount > 1 then
     SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
@@ -270,14 +272,14 @@ function L:initCode()
     if not name or not link then return RunOtherScripts(self, ...) end
 
     local _, _, _, _, _, _, _, _, _, _, _, itemTypeId, itemSubTypeId = GetItemInfo(link)
-    
+
     -- Non recipe items are no problem, because only one call of OnTooltipSetItem()
     if itemTypeId ~= LE_ITEM_CLASS_RECIPE or itemSubTypeId == LE_ITEM_RECIPE_BOOK then
       AddSellPrice(self)
       return RunOtherScripts(self, ...)
     end
-    
-    
+
+
     -- If the recipe has no product, there is also only one call of OnTooltipSetItem().
     local itemId = tonumber(string_match(link, "^.-:(%d+):"))
     local _, productId = LibStub("LibRecipes-2.0"):GetRecipeInfo(itemId)
@@ -285,7 +287,7 @@ function L:initCode()
       AddSellPrice(self)
       return RunOtherScripts(self, ...)
     end
-      
+
 
     -- Otherwise, find out if this is the first or second call of OnTooltipSetItem().
     -- We recognise this by checking if the last line starts with "Requires"
@@ -295,27 +297,27 @@ function L:initCode()
     local lastLine = _G[self:GetName().."TextLeft"..self:NumLines()]:GetText()
     local searchPattern = string_gsub(LOCKED_WITH_ITEM, "%%s", ".-")
     if not string_find(lastLine, "^\n.-"..searchPattern) and not string_find(secondLastLine, "^\n.-"..searchPattern) then
-      
+
       -- For debugging:
       -- print("|n|nPREHOOK: This is the first call, STOP!")
       -- for i = 1, self:NumLines(), 1 do
         -- local line = _G[self:GetName().."TextLeft"..i]:GetText()
         -- print (i, line)
       -- end
-      
+
       return
-      
+
     else
-    
+
       -- print("|n|nPREHOOK: This is the second call!")
       -- for i = 1, self:NumLines(), 1 do
         -- local line = _G[self:GetName().."TextLeft"..i]:GetText()
         -- print (i, line)
       -- end
-    
+
       AddSellPrice(self)
       return RunOtherScripts(self, ...)
-    
+
     end
 
   end)
@@ -331,7 +333,7 @@ end
 local originalGetItem = GameTooltip.GetItem
 GameTooltip:HookScript("OnHide", function(self)
   GameTooltip.GetItem = originalGetItem
-  
+
   moneyFrameToLabel = nil
 end)
 
