@@ -1,4 +1,4 @@
-## Interface: 80200
+## Interface: 80205
 ## Title: SellPricePerUnit
 ## Author: LudiusMaximus
 ## Notes: Adds "Sell Price per unit" to the tooltip of item stacks.
