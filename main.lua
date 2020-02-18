@@ -256,10 +256,10 @@ function L:initCode()
 
   -- We do a prehook to read the tooltip before any other addons
   -- have changed it.
-  local otherScripts = GameTooltip:GetScript("OnTooltipSetItem")
+  local OtherScripts = GameTooltip:GetScript("OnTooltipSetItem")
   local function RunOtherScripts(self, ...)
-    if otherScripts then
-      return otherScripts(self, ...)
+    if OtherScripts then
+      return OtherScripts(self, ...)
     else
       return
     end
