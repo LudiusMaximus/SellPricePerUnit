@@ -1,8 +1,10 @@
-## Interface: 80300
+## Interface: 90001
+## Version: @project-version@
 ## Title: Sell Price Per Unit
 ## Author: LudiusMaximus
 ## Notes: Adds "Sell Price per unit" to the tooltip of item stacks.
-## Version: 1.3
+## X-Curse-Project-ID: 335449
+## X-WoWI-ID: 25133
 ## X-Donate: PayPal:ludiusmaximus@gmail.com
 ## X-License: The MIT License (MIT)
 
