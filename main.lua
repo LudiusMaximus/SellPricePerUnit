@@ -15,6 +15,8 @@ local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
 
 
 -- Have to override GameTooltip.GetItem() after calling ClearLines().
+-- Because ClearLines() leads to GetItem() not returning the name and id
+-- of the previous item any more.
 -- This will restore the original after the tooltip is closed.
 local originalGetItem = GameTooltip.GetItem
 GameTooltip:HookScript("OnHide", function(self)
