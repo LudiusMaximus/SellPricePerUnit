@@ -61,6 +61,8 @@ GameTooltip:HookScript("OnTooltipSetItem", function(self)
   elseif focusFrame:GetParent() and focusFrame:GetParent().count then
     stackCount = focusFrame:GetParent().count
   end
+  -- If stackCount cannot be translated to number (particularly if it is a table in some rare cases),
+  -- tonumber() returns 0.
   stackCount = tonumber(stackCount)
   if not stackCount or stackCount <= 1 then return end
 
