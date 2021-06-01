@@ -282,7 +282,7 @@ function L:initCode()
 
     -- If the recipe has no product, there is also only one call of OnTooltipSetItem().
     local itemId = tonumber(string_match(link, "^.-:(%d+):"))
-    local _, productId = LibStub("LibRecipes-1.0"):GetRecipeInfo(itemId)
+    local _, productId = LibStub("LibRecipes-3.0"):GetRecipeInfo(itemId)
     if not productId then
       AddSellPrice(self)
       return RunOtherScripts(self, ...)
