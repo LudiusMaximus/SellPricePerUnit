@@ -14,6 +14,7 @@ externals:
 enable-nolib-creation: no
 
 ludius-changelog: yes
+no-wowi-classic-link: yes
 
 ignore:
  - README.md
