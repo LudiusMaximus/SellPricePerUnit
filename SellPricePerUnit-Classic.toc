@@ -1,10 +1,10 @@
-## Interface: 20501
+## Interface: 11307
 ## Version: @project-version@
 ## Title: Sell Price Per Unit
 ## Author: LudiusMaximus
 ## Notes: If applicable "Sell Price" and/or "Sell Price per unit" are added to the item tooltip.
 ## X-Curse-Project-ID: 335449
-## X-WoWI-ID: 123
+## X-WoWI-ID: 25216
 ## X-Donate: PayPal:ludiusmaximus@gmail.com
 ## X-License: The MIT License (MIT)
 
