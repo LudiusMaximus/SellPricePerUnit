@@ -6,10 +6,9 @@ externals:
     Libs/AceTimer-3.0:
         url: https://repos.wowace.com/wow/ace3/trunk/AceTimer-3.0
     Libs/LibRecipes-3.0:
-        url: https://repos.wowace.com/wow/librecipes-3-0
+        url: https://github.com/warmexx/librecipes-3-0
     Libs/LibStub:
         url: https://repos.wowace.com/wow/libstub/trunk
-
 
 enable-nolib-creation: no
 
