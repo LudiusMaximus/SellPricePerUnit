@@ -4,7 +4,7 @@
 ## Author: LudiusMaximus
 ## Notes: If applicable "Sell Price" and/or "Sell Price per unit" are added to the item tooltip.
 ## X-Curse-Project-ID: 335449
-## X-WoWI-ID: 26076
+## X-WoWI-ID: 25216
 ## X-Donate: PayPal:ludiusmaximus@gmail.com
 ## X-License: The MIT License (MIT)
 
