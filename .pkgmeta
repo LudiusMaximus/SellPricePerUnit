@@ -1,8 +1,7 @@
 package-as: SellPricePerUnit
 
-enable-nolib-creation: no
-
-ludius-changelog: yes
-
-ignore:
- - README.md
+externals:
+    Libs/LibRecipes-3.0:
+        url: https://github.com/warmexx/librecipes-3-0
+    Libs/LibStub:
+        url: https://repos.wowace.com/wow/libstub/trunk
