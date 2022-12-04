@@ -70,6 +70,9 @@ end
 
 local function AddSellPrice(tooltip)
 
+  -- Quest reward item tooltips have no tooltip.
+  if not tooltip.GetItem then return end
+
   local name, link = tooltip:GetItem()
   -- Just to be on the safe side...
   if not name or not link then return end
