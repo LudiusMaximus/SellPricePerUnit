@@ -130,7 +130,7 @@ local function AddSellPrice(tooltip)
     if itemSellPrice == 0 then
 
 
-      if not merchantFrameOpen or not focusFrame:GetName() or not string_find(focusFrame:GetName(), "^ContainerFrame") then
+      if not merchantFrameOpen or not focusFrame or not focusFrame:GetName() or not string_find(focusFrame:GetName(), "^ContainerFrame") then
 
         -- Before 10.0.2, we can just add the unsellable label, because due to our
         -- pre-hook we can be sure that we are the first added line.
