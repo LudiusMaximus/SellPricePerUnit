@@ -129,8 +129,11 @@ local function AddSellPrice(tooltip)
     -- we add the unsellable ("No sell price") label.
     if itemSellPrice == 0 then
 
+      -- print(merchantFrameOpen, focusFrame, focusFrame:GetName(), string_find(focusFrame:GetName(), "^ContainerFrame"))
 
-      if not merchantFrameOpen or not focusFrame or not focusFrame:GetName() or not string_find(focusFrame:GetName(), "^ContainerFrame") then
+      -- While we *are* at a vendor, we still want to add the unsellable line to the tooltips of items that normally
+      -- don't have it. These are recognisable by their name.
+      if not merchantFrameOpen or not focusFrame or not focusFrame:GetName() or (not string_find(focusFrame:GetName(), "^ContainerFrame") and not string_find(focusFrame:GetName(), "^BagnonContainer")) then
 
         -- Before 10.0.2, we can just add the unsellable label, because due to our
         -- pre-hook we can be sure that we are the first added line.
