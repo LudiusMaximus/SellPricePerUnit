@@ -8,7 +8,7 @@ local tonumber = tonumber
 
 local GameTooltip = _G.GameTooltip
 local GetItemInfo = _G.GetItemInfo
-local GetMouseFocus = _G.GetMouseFocus
+local GetMouseFoci = _G.GetMouseFoci
 local MerchantFrame = _G.MerchantFrame
 
 local SELL_PRICE = _G.SELL_PRICE
@@ -87,7 +87,18 @@ local function AddSellPrice(tooltip)
   -- Get the number of items in stack.
   -- Inspired by: https://www.wowinterface.com/downloads/info25078-BetterVendorPrice.html
   local stackCount = nil
-  local focusFrame = GetMouseFocus()
+
+  local focusFrame
+  -- GetMouseFocus() was removed in 11.0.0.
+  if GetMouseFoci then
+    local focusFrames = GetMouseFoci()
+    -- If we have no or more than one focus frame, something is not right...
+    if focusFrames[1] == nil or focusFrames[2] ~= nil then return end
+    focusFrame = focusFrames[1]
+  else
+    focusFrame = GetMouseFocus()
+  end
+
   if focusFrame and focusFrame.count then
     stackCount = focusFrame.count
   -- Needed for Bagnon cached Bagnon items.
@@ -259,10 +270,10 @@ local function AddSellPrice(tooltip)
 
   -- Store all lines of the original tooltip.
   for i = 1, numLines, 1 do
-    
+
     -- Happens when the Appearances->Sets tab is opened with BetterWardrobe running.
     if not _G[tooltip:GetName().."TextLeft"..i] or not _G[tooltip:GetName().."TextRight"..i] then return end
-    
+
     leftText[i] = _G[tooltip:GetName().."TextLeft"..i]:GetText()
     leftTextR[i], leftTextG[i], leftTextB[i] = _G[tooltip:GetName().."TextLeft"..i]:GetTextColor()
 
