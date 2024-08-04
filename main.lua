@@ -77,7 +77,14 @@ local function AddSellPrice(tooltip)
   -- Just to be on the safe side...
   if not name or not link then return end
 
-  local _, _, _, _, _, _, _, _, _, _, itemSellPrice = GetItemInfo(link)
+  local _, _, _, _, _, _, _, _, _, _, itemSellPrice, classID = GetItemInfo(link)
+  
+  
+  -- Got a report that "Sell Price Per Unit" blocked using a quest item through the quest tracker:
+  -- https://legacy.curseforge.com/wow/addons/sell-price-per-unit?comment=18
+  -- Could not reproduce this, but I guess it does not hurt to exclued quest items.
+  -- https://warcraft.wiki.gg/wiki/ItemType
+  if classID == 12 then return end
 
   -- GetItemInfo() may return nil sometimes.
   -- https://wow.gamepedia.com/API_GetItemInfo
