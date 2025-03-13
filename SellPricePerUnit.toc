@@ -5,6 +5,7 @@
 ## Notes: Adds "Sell Price per unit" to the tooltip of item stacks.
 ## X-Curse-Project-ID: 335449
 ## X-WoWI-ID: 25216
+## X-Wago-ID: 56n93aN9
 ## X-Donate: PayPal:ludiusmaximus@gmail.com
 ## X-License: The MIT License (MIT)
 
