@@ -77,9 +77,14 @@ local function AddSellPrice(tooltip)
   -- Just to be on the safe side...
   if not name or not link then return end
 
+  local itemId = tonumber(string_match(link, "^.-:(%d+):"))
+  
+  -- This world quest reward behaves weirdly on world map tooltip. It is "no sell price" anyway.
+  if itemId == 228361 then return end
+
   local _, _, _, _, _, _, _, _, _, _, itemSellPrice, classID = GetItemInfo(link)
   
-  
+
   -- Got a report that "Sell Price Per Unit" blocked using a quest item through the quest tracker:
   -- https://legacy.curseforge.com/wow/addons/sell-price-per-unit?comment=18
   -- Could not reproduce this, but I guess it does not hurt to exclued quest items.
@@ -163,7 +168,6 @@ local function AddSellPrice(tooltip)
         -- before any addon has added stuff to it:
         else
 
-          local itemId = tonumber(string_match(link, "^.-:(%d+):"))
           local tooltipLines = C_TooltipInfo.GetItemByID(itemId).lines
 
           local numLines = 1
