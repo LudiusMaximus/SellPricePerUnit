@@ -7,7 +7,7 @@ local string_match = string.match
 local tonumber = tonumber
 
 local GameTooltip = _G.GameTooltip
-local GetItemInfo = _G.GetItemInfo
+local GetItemInfo = _G.C_Item.GetItemInfo
 local GetMouseFoci = _G.GetMouseFoci
 local MerchantFrame = _G.MerchantFrame
 
