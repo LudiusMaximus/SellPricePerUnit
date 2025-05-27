@@ -67,6 +67,42 @@ end
 
 
 
+-- Normally, we want the money frame or unsellable label to appear in the tooltip
+-- at the bottom of the all other WoW stock tooltip lines; i.e. before any other addon
+-- has added further lines to the tooltip.
+-- Before 10.0.2 this was able with a pre-hook.
+-- After 10.0.2, we try to determine the tooltip line after which to insert
+-- by the number of lines returned by C_TooltipInfo.GetItemByID(itemId).
+-- This works OK for bag items (except that class restriction lines may be ommitted in the actual tooltip).
+-- For items sold in a merchant frame, it not good enough! Because the actual tooltip can have so many
+-- more lines added to the stock tooltip, which are not returned by C_TooltipInfo.GetItemByID(itemId)
+-- (e.g. Renown required, Season, Upgrade Level, "Shift click to by a different amount").
+-- Taking care of all these special cases would be too much of a pain for the little gain.
+local function GetLastTooltipLine(itemId)
+
+  -- Get default tooltip lines for this item.
+  local tooltipLines = C_TooltipInfo.GetItemByID(itemId).lines
+
+  -- Determine the last line.
+  local lastLine = 1
+  local ingnoredLines = 0
+  while tooltipLines[lastLine] do
+    -- print(lastLine .. ":", tooltipLines[lastLine].leftText)
+
+    -- Ignore class restriction lines by checking the line type.
+    if tooltipLines[lastLine].type == Enum.TooltipDataLineType.RestrictedRaceClass then
+      -- print("IGNORING")
+      ingnoredLines = ingnoredLines + 1
+    end
+
+    lastLine = lastLine + 1
+  end
+
+  return lastLine - ingnoredLines - 1
+
+end
+
+
 
 local function AddSellPrice(tooltip)
 
@@ -78,12 +114,12 @@ local function AddSellPrice(tooltip)
   if not name or not link then return end
 
   local itemId = tonumber(string_match(link, "^.-:(%d+):"))
-  
-  -- This world quest reward behaves weirdly on world map tooltip. It is "no sell price" anyway.
-  if itemId == 228361 then return end
+
+  -- These world quest rewards behave weirdly on world map tooltip. It is "no sell price" anyway.
+  if itemId == 228361 or itemId == 235548 then return end
 
   local _, _, _, _, _, _, _, _, _, _, itemSellPrice, classID = GetItemInfo(link)
-  
+
 
   -- Got a report that "Sell Price Per Unit" blocked using a quest item through the quest tracker:
   -- https://legacy.curseforge.com/wow/addons/sell-price-per-unit?comment=18
@@ -134,69 +170,90 @@ local function AddSellPrice(tooltip)
   local merchantFrameOpen = MerchantFrame and MerchantFrame:IsShown()
 
 
-  -- Where should we insert our new line?
-  local insertAfterLine = nil
-
-  -- For retail-WoW we have to manually insert the unsellable label at
-  -- the right position while rebuilding the tooltip,
-  -- because from 10.0.2 on we cannot do the prehook any more.
+  -- Flags to indicate whether we should inser money frame or unsellable label. (TODO: Really needed?)
+  local insertNewMoneyFrame = false
   local insertUnsellable = false
 
+  -- After which line should we insert the money frame or unsellable label?
+  local insertAfterLine = nil
 
-  -- In classic, if there is no money frame, we not at a vendor.
-  -- In Wrath and retail, if there is no money frame, we are not at a vendor AND the item is unsellable.
+
+  -- If there is no money frame, we always add one.
   if not tooltip.shownMoneyFrames then
 
+    -- print("No money frame")
 
-    -- If the item has no sell price and we are not at a vendor,
-    -- we add the unsellable ("No sell price") label.
-    if itemSellPrice == 0 then
 
-      -- print(merchantFrameOpen, focusFrame, focusFrame:GetName(), string_find(focusFrame:GetName(), "^ContainerFrame"))
+    if itemSellPrice ~= 0 then
 
-      -- While we *are* at a vendor, we still want to add the unsellable line to the tooltips of items that normally
-      -- don't have it. These are recognisable by their name.
-      if not merchantFrameOpen or not focusFrame or not focusFrame:GetName() or (not string_find(focusFrame:GetName(), "^ContainerFrame") and not string_find(focusFrame:GetName(), "^BagnonContainer")) then
+      -- print("itemSellPrice not zero", itemSellPrice)
+
+      -- Before 10.0.2, we can just add the unsellable label, because due to our
+      -- pre-hook we can be sure that we are the first added line.
+      if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
+        SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+        return
+
+      -- After 10.0.2 we use GetLastTooltipLine().
+      else
+
+        -- If this is an item in the merchant frame, we just add the sell price now,
+        -- Because GetLastTooltipLine() is too unreliable (see above).
+        if merchantFrameOpen then
+          local owner = tooltip:GetOwner()
+          if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
+            SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+            return
+          end
+        end
+
+        insertNewMoneyFrame = true
+        insertAfterLine = GetLastTooltipLine(itemId)
+
+      end
+
+    else
+
+      -- print("itemSellPrice zero")
+
+      -- When at a merchant, the bag items already get the unsellable label.
+      -- So while we are at a merchant, we must not add the unsellable line to bag items;
+      -- only to items in the merchant frame, which normally don't have these.
+      if not merchantFrameOpen or (focusFrame and focusFrame:GetName() and string_find(focusFrame:GetName(), "^MerchantItem")) then
 
         -- Before 10.0.2, we can just add the unsellable label, because due to our
         -- pre-hook we can be sure that we are the first added line.
         if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
           tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
+          return
 
-        -- After 10.0.2 we cannot do the pre-hook any more.
-        -- But we have another way to determine the number of tooltip lines
-        -- before any addon has added stuff to it:
+        -- After 10.0.2 we use GetLastTooltipLine().
         else
 
-          local tooltipLines = C_TooltipInfo.GetItemByID(itemId).lines
-
-          local numLines = 1
-          while tooltipLines[numLines] do
-            -- print(numLines .. ":", tooltipLines[numLines].args[2].stringVal)
-            numLines = numLines + 1
+          -- If this is an item in the merchant frame, we just add the sell price now,
+          -- Because GetLastTooltipLine() is too unreliable (see above).
+          if merchantFrameOpen then
+            local owner = tooltip:GetOwner()
+            if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
+              tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
+              return
+            end
           end
-          insertAfterLine = numLines - 1
+
           insertUnsellable = true
+          insertAfterLine = GetLastTooltipLine(itemId)
+
         end
 
       end
 
-      -- Before 10.0.2, we are done here because we already added the unsellable line.
-      if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
-        return
-      end
-
-    -- In classic, the items have no sell price label while not at a vendor.
-    -- If this is the case, we add it. No need to check for the client version.
-    else
-      SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
     end
   end
 
 
 
 
-  -- In classic, while you are at a vendor. The sell price is shown without the
+  -- In classic, while you are at a merchant, the sell price is shown without the
   -- "Sell Price:" prefix label. This is not so nice, so we want to replace it
   -- with a labeled version.
   if WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
@@ -312,10 +369,14 @@ local function AddSellPrice(tooltip)
   else
     SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
 
-    assert(stackCount > 1)
-    SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+    if stackCount > 1 then
+      SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+    end
 
-    insertAfterLine = insertAfterLine + 1
+    -- If this was no new money frame added, we skip the old money frame of the recorded lines.
+    if not insertNewMoneyFrame then
+      insertAfterLine = insertAfterLine + 1
+    end
   end
 
   for i = insertAfterLine + 1, numLines, 1 do
