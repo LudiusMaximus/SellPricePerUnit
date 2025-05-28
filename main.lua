@@ -1,5 +1,5 @@
 
-local _G = _G
+
 local string_find = string.find
 local string_format = string.format
 local string_gsub = string.gsub
@@ -7,9 +7,14 @@ local string_match = string.match
 local tonumber = tonumber
 
 local GameTooltip = _G.GameTooltip
-local GetItemInfo = _G.C_Item.GetItemInfo
 local GetMouseFoci = _G.GetMouseFoci
 local MerchantFrame = _G.MerchantFrame
+
+local C_Item_GetItemInfo = _G.C_Item.GetItemInfo
+local C_Item_GetItemLocation = _G.C_Item.GetItemLocation
+local C_LegendaryCrafting_IsRuneforgeLegendary = _G.C_LegendaryCrafting.IsRuneforgeLegendary
+local C_TooltipInfo_GetItemByGUID = _G.C_TooltipInfo.GetItemByGUID
+local C_TooltipInfo_GetItemByID = _G.C_TooltipInfo.GetItemByID
 
 local SELL_PRICE = _G.SELL_PRICE
 local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
@@ -72,25 +77,45 @@ end
 -- has added further lines to the tooltip.
 -- Before 10.0.2 this was able with a pre-hook.
 -- After 10.0.2, we try to determine the tooltip line after which to insert
--- by the number of lines returned by C_TooltipInfo.GetItemByID(itemId).
+-- by the number of lines returned by GetItemByGUID (or GetItemByID).
 -- This works OK for bag items (except that class restriction lines may be ommitted in the actual tooltip).
 -- For items sold in a merchant frame, it not good enough! Because the actual tooltip can have so many
--- more lines added to the stock tooltip, which are not returned by C_TooltipInfo.GetItemByID(itemId)
+-- more lines added to the stock tooltip, which are not returned by GetItemByGUID
 -- (e.g. Renown required, Season, Upgrade Level, "Shift click to by a different amount").
 -- Taking care of all these special cases would be too much of a pain for the little gain.
-local function GetLastTooltipLine(itemId)
+-- We prefer GUID, as it gives the more realistic tooltip. (E.g. for Shadowlands Crafted Legendaries it
+-- shows the tooltip of the enchantment and not just that of the base item. Also RestrictedRaceClass lines
+-- are already removed, so we do not have to manually ignore them.
+-- We just use itemId as a fallback.
+local function GetLastTooltipLine(guid, itemId)
 
-  -- Get default tooltip lines for this item.
-  local tooltipLines = C_TooltipInfo.GetItemByID(itemId).lines
+  local tooltipLines = nil
 
-  -- Determine the last line.
+  if guid then
+    -- Get the base, unmodified tooltip using the item's GUID.
+    local baseTooltipData = C_TooltipInfo_GetItemByGUID(guid)
+    if baseTooltipData then
+      tooltipLines = baseTooltipData.lines
+    else
+      -- Flag to enable ignoring below.
+      guid = nil
+    end
+  end
+
+  -- Fallback, e.g. for cached bank items of Baganator, Bagnon, ...
+  -- for which we can get neither guid nor location.
+  if not tooltipLines and itemId then
+    tooltipLines = C_TooltipInfo_GetItemByID(itemId).lines
+  end
+
+
   local lastLine = 1
   local ingnoredLines = 0
   while tooltipLines[lastLine] do
     -- print(lastLine .. ":", tooltipLines[lastLine].leftText)
 
-    -- Ignore class restriction lines by checking the line type.
-    if tooltipLines[lastLine].type == Enum.TooltipDataLineType.RestrictedRaceClass then
+    -- If this tooltip was not created from GUID, we have to ignore class restriction lines by checking the line type.
+    if not guid and tooltipLines[lastLine].type == Enum.TooltipDataLineType.RestrictedRaceClass then
       -- print("IGNORING")
       ingnoredLines = ingnoredLines + 1
     end
@@ -103,33 +128,98 @@ local function GetLastTooltipLine(itemId)
 end
 
 
+-- Some items have a sell price, yet no vendor buys them.
+-- (*) Correctly has no sell price, yet the game shows no unsellable label while at vendors.
+local fixUnsellableItems = {
+  [204790] = true,    -- Strong Sniffin' Soup for Niffen
+  [210814] = true,    -- (*) Artisan's Acuity
+  [211297] = true,    -- Fractured Spark of Omens
+  [220152] = true,    -- Cursed Ghoulfish
+  [223901] = true,    -- (*) Violet Silk Scrap
+  [223902] = true,    -- (*) Crimson Silk Scrap
+  [223903] = true,    -- (*) Gold Silk Scrap
+  [224185] = true,    -- (*) Crab-Guiding Branch
+  [224818] = true,    -- (*) Algari Miner's Notes
+  [226362] = true,    -- Torn Note
+  [230905] = true,    -- Fractured Spark of Fortunes
+  [236096] = true,    -- (*) Coffer Key Shard
+}
 
-local function AddSellPrice(tooltip)
 
-  -- Quest reward item tooltips have no tooltip.
-  if not tooltip.GetItem then return end
+-- Function to check if an item is a Shadowlands legendary.
+-- Because these have a sell price even though they are not sellable.
+local function IsRuneforgeLegendary(guid)
 
-  local name, link = tooltip:GetItem()
-  -- Just to be on the safe side...
-  if not name or not link then return end
+  if not guid then return false end
 
-  local itemId = tonumber(string_match(link, "^.-:(%d+):"))
+  -- Get item location from the GUID.
+  local itemLocation = C_Item_GetItemLocation(guid)
 
-  -- These world quest rewards behave weirdly on world map tooltip. It is "no sell price" anyway.
-  if itemId == 228361 or itemId == 235548 then return end
+  -- Vendor buyback items return an invalid itemLocation.
+  -- Trying to check these with itemLocation:IsValid() already throws an error.
+  -- So, we check if GetBagAndSlot returns nil.
+  if not itemLocation or itemLocation:GetBagAndSlot() == nil then return false end
 
-  local _, _, _, _, _, _, _, _, _, _, itemSellPrice, classID = GetItemInfo(link)
+  -- Check if it is a runeforged legendary.
+  return C_LegendaryCrafting_IsRuneforgeLegendary(itemLocation)
+end
 
+
+
+local function AddSellPrice(tooltip, tooltipData)
+
+  -- For tooltips without money frame, we try to add one. But determining the
+  -- correct price for GameTooltipTooltip (i.e. tooltips within the normal tooltip,
+  -- e.g. world quest rewards) is error-prone. 
+  -- Some tooltips even lead to crashes (itemId == 228361 or itemId == 235548).
+  -- So we exclude these altogether.
+  if tooltip == GameTooltipTooltip then return end
 
   -- Got a report that "Sell Price Per Unit" blocked using a quest item through the quest tracker:
   -- https://legacy.curseforge.com/wow/addons/sell-price-per-unit?comment=18
-  -- Could not reproduce this, but I guess it does not hurt to exclued quest items.
-  -- https://warcraft.wiki.gg/wiki/ItemType
-  if classID == 12 then return end
+  -- I could not reproduce this, but I guess exclueding QuestObjectiveTracker items does not hurt.
+  local owner = tooltip:GetOwner()
+  if owner and owner.GetParent then
+    local ownerParent = owner:GetParent()
+    if ownerParent and ownerParent.GetParent and ownerParent:GetParent() == QuestObjectiveTracker then
+      -- print("Skipping QuestObjectiveTracker")
+      return
+    end
+  end
 
+  -- Quest reward item tooltips have no tooltip.
+  if not tooltip.GetItem then return end
+  local _, link = tooltip:GetItem()
+
+
+  local itemId = tooltipData.id
+  -- Fallback.
+  if not itemId then
+    itemId = tonumber(string_match(link, "^.-:(%d+):"))
+  end
+
+  -- print(itemId, C_Item_GetItemInfo(link))
+
+
+  local _, _, itemQuality, _, _, _, _, _, _, _, itemSellPrice, _, _, _, expansionId = C_Item_GetItemInfo(link)
+  
   -- GetItemInfo() may return nil sometimes.
-  -- https://wow.gamepedia.com/API_GetItemInfo
+  -- https://warcraft.wiki.gg/wiki/API_C_Item.GetItemInfo
   if itemSellPrice == nil then return end
+  
+  -- If it is a Shadowlands Legendary and we have no GUID to make sure whether it is a Crafted Legendary, we abort.
+  -- Because GetLastTooltipLine() cannot determine the correct insertAfterLine for these without GUID.
+  if expansionId == 8 and itemQuality == 5 and not tooltipData.guid then
+    -- print("Skipping unidentifiable Shadowlands Legendary!")
+    return
+  end
+
+
+  local fixUnsellable = false
+  -- itemQuality == 6 is for Artifact items, which have a price but are not sellable.
+  if itemQuality == 6 or fixUnsellableItems[itemId] or IsRuneforgeLegendary(tooltipData.guid) then
+    fixUnsellable = true
+  end
 
 
   -- Get the number of items in stack.
@@ -166,7 +256,7 @@ local function AddSellPrice(tooltip)
   end
 
 
-  -- Need this again below.
+  -- Need this several times below.
   local merchantFrameOpen = MerchantFrame and MerchantFrame:IsShown()
 
 
@@ -183,43 +273,14 @@ local function AddSellPrice(tooltip)
 
     -- print("No money frame")
 
-
-    if itemSellPrice ~= 0 then
-
-      -- print("itemSellPrice not zero", itemSellPrice)
-
-      -- Before 10.0.2, we can just add the unsellable label, because due to our
-      -- pre-hook we can be sure that we are the first added line.
-      if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
-        SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
-        return
-
-      -- After 10.0.2 we use GetLastTooltipLine().
-      else
-
-        -- If this is an item in the merchant frame, we just add the sell price now,
-        -- Because GetLastTooltipLine() is too unreliable (see above).
-        if merchantFrameOpen then
-          local owner = tooltip:GetOwner()
-          if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
-            SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
-            return
-          end
-        end
-
-        insertNewMoneyFrame = true
-        insertAfterLine = GetLastTooltipLine(itemId)
-
-      end
-
-    else
+    if itemSellPrice == 0 or fixUnsellable then
 
       -- print("itemSellPrice zero")
 
-      -- When at a merchant, the bag items already get the unsellable label.
+      -- When at a merchant, (most) bag items already get the unsellable label (except the "fixUnsellable" ones).
       -- So while we are at a merchant, we must not add the unsellable line to bag items;
       -- only to items in the merchant frame, which normally don't have these.
-      if not merchantFrameOpen or (focusFrame and focusFrame:GetName() and string_find(focusFrame:GetName(), "^MerchantItem")) then
+      if not merchantFrameOpen or fixUnsellable or (focusFrame and focusFrame:GetName() and string_find(focusFrame:GetName(), "^MerchantItem")) then
 
         -- Before 10.0.2, we can just add the unsellable label, because due to our
         -- pre-hook we can be sure that we are the first added line.
@@ -241,9 +302,43 @@ local function AddSellPrice(tooltip)
           end
 
           insertUnsellable = true
-          insertAfterLine = GetLastTooltipLine(itemId)
+          insertAfterLine = GetLastTooltipLine(tooltipData.guid, itemId)
 
         end
+
+      end
+
+    else
+
+      -- print("itemSellPrice not zero", itemSellPrice)
+
+      -- Before 10.0.2, we can just add the money frame, because due to our
+      -- pre-hook we can be sure that we are the first added line.
+      if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
+        SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+        if stackCount > 1 then
+          SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+        end
+        return
+
+      -- After 10.0.2 we use GetLastTooltipLine().
+      else
+
+        -- If this is an item in the merchant frame, we just add the sell price now,
+        -- Because GetLastTooltipLine() is too unreliable (see above).
+        if merchantFrameOpen then
+          local owner = tooltip:GetOwner()
+          if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
+            SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+            if stackCount > 1 then
+              SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+            end
+            return
+          end
+        end
+
+        insertNewMoneyFrame = true
+        insertAfterLine = GetLastTooltipLine(tooltipData.guid, itemId)
 
       end
 
@@ -368,7 +463,6 @@ local function AddSellPrice(tooltip)
     tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
   else
     SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
-
     if stackCount > 1 then
       SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
     end
@@ -414,7 +508,7 @@ else
       local name, link = self:GetItem()
       if not name or not link then return RunOtherScripts(self, ...) end
 
-      local _, _, _, _, _, _, _, _, _, _, _, itemTypeId, itemSubTypeId = GetItemInfo(link)
+      local _, _, _, _, _, _, _, _, _, _, _, itemTypeId, itemSubTypeId = C_Item_GetItemInfo(link)
 
       -- Non recipe items are no problem, because only one call of OnTooltipSetItem()
       if itemTypeId ~= LE_ITEM_CLASS_RECIPE or itemSubTypeId == LE_ITEM_RECIPE_BOOK then
