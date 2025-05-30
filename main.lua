@@ -1,20 +1,23 @@
 
-
-local string_find = string.find
-local string_format = string.format
-local string_gsub = string.gsub
-local string_match = string.match
-local tonumber = tonumber
+local select = _G.select
+local string_find = _G.string.find
+local string_format = _G.string.format
+local string_gsub = _G.string.gsub
+local string_match = _G.string.match
+local tonumber = _G.tonumber
 
 local GameTooltip = _G.GameTooltip
+local GetBuildInfo = _G.GetBuildInfo
 local GetMouseFoci = _G.GetMouseFoci
 local MerchantFrame = _G.MerchantFrame
 
 local C_Item_GetItemInfo = _G.C_Item.GetItemInfo
 local C_Item_GetItemLocation = _G.C_Item.GetItemLocation
-local C_LegendaryCrafting_IsRuneforgeLegendary = _G.C_LegendaryCrafting.IsRuneforgeLegendary
-local C_TooltipInfo_GetItemByGUID = _G.C_TooltipInfo.GetItemByGUID
-local C_TooltipInfo_GetItemByID = _G.C_TooltipInfo.GetItemByID
+
+-- These are not there in classic.
+local C_LegendaryCrafting_IsRuneforgeLegendary = C_LegendaryCrafting and _G.C_LegendaryCrafting.IsRuneforgeLegendary or nil
+local C_TooltipInfo_GetItemByGUID = C_TooltipInfo and _G.C_TooltipInfo.GetItemByGUID or nil
+local C_TooltipInfo_GetItemByID = C_TooltipInfo and _G.C_TooltipInfo.GetItemByID or nil
 
 local SELL_PRICE = _G.SELL_PRICE
 local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
@@ -33,33 +36,6 @@ GameTooltip:HookScript("OnHide", function(self)
 end)
 
 
-
--- When I want to give the vendor money frame a label, this gets
--- mysteriously removed again. I could not trace down which function
--- is responsible, only that it happens between GameTooltip_ClearMoney
--- and MoneyFrame_UpdateMoney. This is why I am hooking the latter to
--- restore the label everytime.
-local moneyFrameToLabel = nil
-
-if WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
-
-  GameTooltip:HookScript("OnHide", function(self)
-    moneyFrameToLabel = nil
-  end)
-
-  hooksecurefunc("MoneyFrame_UpdateMoney", function(...)
-    local moneyFrame = ...
-
-    if moneyFrame and moneyFrameToLabel and moneyFrame == moneyFrameToLabel then
-      moneyFramePrefixText = _G[moneyFrame:GetName().."PrefixText"];
-      if moneyFramePrefixText:GetText() == nil then
-        moneyFramePrefixText:SetText(string.format("%s:", SELL_PRICE))
-        local _, moneyFrameAnchor = moneyFrame:GetPoint(1)
-        moneyFrame:SetPoint("LEFT", moneyFrameAnchor:GetName(), "LEFT", 4, 0);
-      end
-    end
-  end)
-end
 
 
 local function AddLineOrDoubleLine(tooltip, leftText, rightText, leftTextR, leftTextG, leftTextB, rightTextR, rightTextG, rightTextB, intendedWordWrap)
@@ -150,6 +126,9 @@ local fixUnsellableItems = {
 -- Because these have a sell price even though they are not sellable.
 local function IsRuneforgeLegendary(guid)
 
+  -- If we are pre-Shadowlands.
+  if not C_LegendaryCrafting_IsRuneforgeLegendary then return false end
+
   if not guid then return false end
 
   -- Get item location from the GUID.
@@ -170,7 +149,7 @@ local function AddSellPrice(tooltip, tooltipData)
 
   -- For tooltips without money frame, we try to add one. But determining the
   -- correct price for GameTooltipTooltip (i.e. tooltips within the normal tooltip,
-  -- e.g. world quest rewards) is error-prone. 
+  -- e.g. world quest rewards) is error-prone.
   -- Some tooltips even lead to crashes (itemId == 228361 or itemId == 235548).
   -- So we exclude these altogether.
   if tooltip == GameTooltipTooltip then return end
@@ -192,7 +171,8 @@ local function AddSellPrice(tooltip, tooltipData)
   local _, link = tooltip:GetItem()
 
 
-  local itemId = tooltipData.id
+  -- No tooltipData in classic.
+  local itemId = tooltipData and tooltipData.id or nil
   -- Fallback.
   if not itemId then
     itemId = tonumber(string_match(link, "^.-:(%d+):"))
@@ -202,23 +182,30 @@ local function AddSellPrice(tooltip, tooltipData)
 
 
   local _, _, itemQuality, _, _, _, _, _, _, _, itemSellPrice, _, _, _, expansionId = C_Item_GetItemInfo(link)
-  
+
   -- GetItemInfo() may return nil sometimes.
   -- https://warcraft.wiki.gg/wiki/API_C_Item.GetItemInfo
   if itemSellPrice == nil then return end
-  
-  -- If it is a Shadowlands Legendary and we have no GUID to make sure whether it is a Crafted Legendary, we abort.
-  -- Because GetLastTooltipLine() cannot determine the correct insertAfterLine for these without GUID.
-  if expansionId == 8 and itemQuality == 5 and not tooltipData.guid then
-    -- print("Skipping unidentifiable Shadowlands Legendary!")
-    return
-  end
 
 
   local fixUnsellable = false
-  -- itemQuality == 6 is for Artifact items, which have a price but are not sellable.
-  if itemQuality == 6 or fixUnsellableItems[itemId] or IsRuneforgeLegendary(tooltipData.guid) then
-    fixUnsellable = true
+
+  -- Before 10.0.2, there was no tooltipData.
+  -- TODO: See you for Shadowlands Classic to find a way to determine IsRuneforgeLegendary without it.
+  if select(4, GetBuildInfo()) >= 100002 then
+
+    -- If it is a Shadowlands Legendary and we have no GUID to make sure whether it is a Crafted Legendary, we abort.
+    -- Because GetLastTooltipLine() cannot determine the correct insertAfterLine for these without GUID.
+    if expansionId == 8 and itemQuality == 5 and not tooltipData.guid then
+      -- print("Skipping unidentifiable Shadowlands Legendary!")
+      return
+    end
+
+    -- itemQuality == 6 is for Artifact items, which have a price but are not sellable.
+    if itemQuality == 6 or fixUnsellableItems[itemId] or IsRuneforgeLegendary(tooltipData.guid) then
+      fixUnsellable = true
+    end
+
   end
 
 
@@ -284,7 +271,7 @@ local function AddSellPrice(tooltip, tooltipData)
 
         -- Before 10.0.2, we can just add the unsellable label, because due to our
         -- pre-hook we can be sure that we are the first added line.
-        if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
+        if select(4, GetBuildInfo()) < 100002 then
           tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
           return
 
@@ -314,7 +301,7 @@ local function AddSellPrice(tooltip, tooltipData)
 
       -- Before 10.0.2, we can just add the money frame, because due to our
       -- pre-hook we can be sure that we are the first added line.
-      if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
+      if select(4, GetBuildInfo()) < 100002 then
         SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
         if stackCount > 1 then
           SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
@@ -346,33 +333,6 @@ local function AddSellPrice(tooltip, tooltipData)
   end
 
 
-
-
-  -- In classic, while you are at a merchant, the sell price is shown without the
-  -- "Sell Price:" prefix label. This is not so nice, so we want to replace it
-  -- with a labeled version.
-  if WOW_PROJECT_ID == WOW_PROJECT_CLASSIC then
-    if merchantFrameOpen then
-
-      -- Identify the correct money frame.
-      for i = 1, tooltip.shownMoneyFrames, 1 do
-
-        local moneyFrame = _G[tooltip:GetName().."MoneyFrame"..i]
-        local moneyFramePrefixText = _G[tooltip:GetName().."MoneyFrame"..i.."PrefixText"]
-
-        if moneyFramePrefixText:GetText() == nil then
-
-          moneyFramePrefixText:SetText(string.format("%s:", SELL_PRICE))
-          local _, moneyFrameAnchor = moneyFrame:GetPoint(1)
-          moneyFrame:SetPoint("LEFT", moneyFrameAnchor:GetName(), "LEFT", 4, 0);
-
-          -- Got to remember this frame to re-add the label.
-          moneyFrameToLabel = moneyFrame
-          break
-        end
-      end
-    end
-  end
 
 
   if not insertAfterLine and stackCount == 1 then
@@ -482,8 +442,8 @@ end
 
 
 
--- In retail, we have to use this to alter the tooltip.
-if WOW_PROJECT_ID == WOW_PROJECT_MAINLINE then
+-- After 10.0.2 we have to use this to alter the tooltip.
+if select(4, GetBuildInfo()) >= 100002 then
   TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, AddSellPrice)
 
 -- In classic, we use a pre-hook.
@@ -505,8 +465,8 @@ else
 
     GameTooltip:SetScript("OnTooltipSetItem", function(self, ...)
 
-      local name, link = self:GetItem()
-      if not name or not link then return RunOtherScripts(self, ...) end
+      local _, link = self:GetItem()
+      if not link then return RunOtherScripts(self, ...) end
 
       local _, _, _, _, _, _, _, _, _, _, _, itemTypeId, itemSubTypeId = C_Item_GetItemInfo(link)
 
