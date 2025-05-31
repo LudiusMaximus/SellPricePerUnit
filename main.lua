@@ -169,6 +169,7 @@ local function AddSellPrice(tooltip, tooltipData)
   -- Quest reward item tooltips have no tooltip.
   if not tooltip.GetItem then return end
   local _, link = tooltip:GetItem()
+  if not link then return end
 
 
   -- No tooltipData in classic.
