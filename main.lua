@@ -150,9 +150,11 @@ local function AddSellPrice(tooltip, tooltipData)
   -- For tooltips without money frame, we try to add one. But determining the
   -- correct price for GameTooltipTooltip (i.e. tooltips within the normal tooltip,
   -- e.g. world quest rewards) is error-prone.
-  -- Some tooltips even lead to crashes (itemId == 228361 or itemId == 235548).
+  -- Some tooltips even lead to crashes (itemId == 228361 or itemId == 235548),
+  -- which actually are in UIWidgetBaseItemEmbeddedTooltip1.
   -- So we exclude these altogether.
-  if tooltip == GameTooltipTooltip then return end
+  -- print(tooltip:GetName())
+  if tooltip == GameTooltipTooltip or tooltip == UIWidgetBaseItemEmbeddedTooltip1 then return end
 
   -- Got a report that "Sell Price Per Unit" blocked using a quest item through the quest tracker:
   -- https://legacy.curseforge.com/wow/addons/sell-price-per-unit?comment=18
