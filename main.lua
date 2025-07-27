@@ -227,12 +227,19 @@ local function AddSellPrice(tooltip, tooltipData)
     focusFrame = GetMouseFocus()
   end
 
-  if focusFrame and focusFrame.count then
-    stackCount = focusFrame.count
-  -- Needed for Bagnon cached Bagnon items.
-  elseif focusFrame and focusFrame:GetParent() and focusFrame:GetParent().count then
-    stackCount = focusFrame:GetParent().count
+  -- DevTools_Dump(focusFrame)
+  if focusFrame then
+    if not focusFrame.OnEnter then
+      -- Something fishy. E.g. WoW token in the shop UI.
+      return
+    elseif focusFrame.count then
+      stackCount = focusFrame.count
+    -- Needed for Bagnon cached Bagnon items.
+    elseif focusFrame:GetParent() and focusFrame:GetParent().count then
+      stackCount = focusFrame:GetParent().count
+    end
   end
+
   -- If stackCount cannot be translated to number (particularly if it is a table in some rare cases),
   -- tonumber() returns 0.
   stackCount = tonumber(stackCount)
