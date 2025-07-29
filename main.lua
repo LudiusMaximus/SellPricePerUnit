@@ -229,8 +229,8 @@ local function AddSellPrice(tooltip, tooltipData)
 
   -- DevTools_Dump(focusFrame)
   if focusFrame then
-    if not focusFrame.OnEnter then
-      -- Something fishy. E.g. WoW token in the shop UI.
+    if not focusFrame.hasItem then
+      -- This should help to exclude bad frames, e.g. WoW token in the shop UI.
       return
     elseif focusFrame.count then
       stackCount = focusFrame.count
