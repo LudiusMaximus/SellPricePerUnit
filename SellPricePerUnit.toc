@@ -1,6 +1,7 @@
-## Interface: 110107
+## Interface: 110200
 ## Version: @project-version@
 ## Title: Sell Price Per Unit
+## IconAtlas: bags-icon-junk
 ## Author: LudiusMaximus
 ## Notes: Adds "Sell Price per unit" to the tooltip of item stacks.
 ## X-Curse-Project-ID: 335449
