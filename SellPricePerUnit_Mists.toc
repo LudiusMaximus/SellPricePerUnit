@@ -1,4 +1,4 @@
-## Interface: 50500
+## Interface: 50501
 ## Version: @project-version@
 ## Title: Sell Price Per Unit
 ## Author: LudiusMaximus
