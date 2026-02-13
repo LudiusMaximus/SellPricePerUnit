@@ -47,6 +47,17 @@ local function AddLineOrDoubleLine(tooltip, leftText, rightText, leftTextR, left
 end
 
 
+-- Wrapper for SetTooltipMoney that uses pcall to catch rare taint errors.
+-- These can occur in corner cases when the money frame is shown during secure contexts.
+local function SafeSetTooltipMoney(...)
+  local success, err = pcall(SetTooltipMoney, ...)
+  if not success then
+    -- Silently ignore taint errors - the tooltip will just lack the sell price in these rare cases.
+    -- print("SellPricePerUnit: SetTooltipMoney failed:", err)
+  end
+  return success
+end
+
 
 -- Normally, we want the money frame or unsellable label to appear in the tooltip
 -- at the bottom of the all other WoW stock tooltip lines; i.e. before any other addon
@@ -344,9 +355,9 @@ local function AddSellPrice(tooltip, tooltipData)
       -- Before 10.0.2, we can just add the money frame, because due to our
       -- pre-hook we can be sure that we are the first added line.
       if select(4, GetBuildInfo()) < 100002 then
-        SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+        SafeSetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
         if stackCount > 1 then
-          SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+          SafeSetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
         end
         return
 
@@ -358,9 +369,9 @@ local function AddSellPrice(tooltip, tooltipData)
         if merchantFrameOpen then
           local owner = tooltip:GetOwner()
           if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
-            SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+            SafeSetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
             if stackCount > 1 then
-              SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+              SafeSetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
             end
             return
           end
@@ -468,9 +479,9 @@ local function AddSellPrice(tooltip, tooltipData)
     local perUnitText = string_format("%s %s: %s", SELL_PRICE, AUCTION_PRICE_PER_ITEM, GetMoneyString(itemSellPrice, true))
     tooltip:AddLine(perUnitText, 1, 1, 1, true)
   else
-    SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+    SafeSetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
     if stackCount > 1 then
-      SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+      SafeSetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
     end
 
     -- If this was no new money frame added, we skip the old money frame of the recorded lines.
