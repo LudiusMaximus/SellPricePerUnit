@@ -1,4 +1,6 @@
 
+local math_floor = _G.math.floor
+local math_ceil  = _G.math.ceil
 local select = _G.select
 local string_find = _G.string.find
 local string_format = _G.string.format
@@ -18,6 +20,7 @@ local C_Item_GetItemLocation = _G.C_Item.GetItemLocation
 local C_LegendaryCrafting_IsRuneforgeLegendary = C_LegendaryCrafting and _G.C_LegendaryCrafting.IsRuneforgeLegendary or nil
 local C_TooltipInfo_GetItemByGUID = C_TooltipInfo and _G.C_TooltipInfo.GetItemByGUID or nil
 local C_TooltipInfo_GetItemByID = C_TooltipInfo and _G.C_TooltipInfo.GetItemByID or nil
+local issecretvalue = _G.issecretvalue or function() return false end
 
 local SELL_PRICE = _G.SELL_PRICE
 local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
@@ -26,36 +29,380 @@ local LE_ITEM_CLASS_RECIPE = _G.LE_ITEM_CLASS_RECIPE
 local LOCKED_WITH_ITEM = _G.LOCKED_WITH_ITEM
 
 
--- Have to override GameTooltip.GetItem() after calling ClearLines().
--- Because ClearLines() leads to GetItem() not returning the name and id
--- of the previous item any more.
--- This will restore the original after the tooltip is closed.
-local OriginalGetItem = GameTooltip.GetItem
-GameTooltip:HookScript("OnHide", function(self)
-  GameTooltip.GetItem = OriginalGetItem
-end)
+-- Insert new lines into a tooltip after a given line number, shifting subsequent
+-- lines down.  All operations use C-side widget APIs (AddLine, SetText,
+-- SetTextColor, Show/Hide) that do not perform Lua-side arithmetic and are
+-- therefore taint-safe inside securecallfunction.
+-- Unlike the old ClearLines()+rebuild approach, this preserves Blizzard's own
+-- money frame untouched.
+-- newLines: array of { text, r, g, b }
+local function InsertTooltipLines(tooltip, insertPoint, newLines)
+  local tooltipName = tooltip:GetName()
+  local numLines = tooltip:NumLines()
+  local insertCount = #newLines
 
-
-
-
-local function AddLineOrDoubleLine(tooltip, leftText, rightText, leftTextR, leftTextG, leftTextB, rightTextR, rightTextG, rightTextB, intendedWordWrap)
-  if rightText then
-    tooltip:AddDoubleLine(leftText, rightText, leftTextR, leftTextG, leftTextB, rightTextR, rightTextG, rightTextB)
-  else
-    tooltip:AddLine(leftText, leftTextR, leftTextG, leftTextB, intendedWordWrap)
+  -- Store text, colours, and right-side state of lines that will shift down.
+  local stored = {}
+  for i = insertPoint + 1, numLines do
+    local leftFS  = _G[tooltipName .. "TextLeft"  .. i]
+    local rightFS = _G[tooltipName .. "TextRight" .. i]
+    if not leftFS or not rightFS then return end
+    local lr, lg, lb = leftFS:GetTextColor()
+    local rr, rg, rb = rightFS:GetTextColor()
+    stored[i] = {
+      leftText   = leftFS:GetText(),
+      lr = lr, lg = lg, lb = lb,
+      rightText  = rightFS:GetText(),
+      rightShown = rightFS:IsShown(),
+      rr = rr, rg = rg, rb = rb,
+    }
   end
+
+  -- Add blank lines at the end to make room.
+  for i = 1, insertCount do
+    tooltip:AddLine(" ", 1, 1, 1, true)
+  end
+
+  -- Write new content at the insertion point.
+  for i = 1, insertCount do
+    local lineNum = insertPoint + i
+    local line = newLines[i]
+    local leftFS  = _G[tooltipName .. "TextLeft"  .. lineNum]
+    local rightFS = _G[tooltipName .. "TextRight" .. lineNum]
+    leftFS:SetText(line.text)
+    leftFS:SetTextColor(line.r, line.g, line.b)
+    rightFS:SetText("")
+    rightFS:Hide()
+  end
+
+  -- Shift stored lines down by insertCount.
+  for i = insertPoint + 1, numLines do
+    local targetLine = i + insertCount
+    local s = stored[i]
+    local leftFS  = _G[tooltipName .. "TextLeft"  .. targetLine]
+    local rightFS = _G[tooltipName .. "TextRight" .. targetLine]
+    leftFS:SetText(s.leftText)
+    leftFS:SetTextColor(s.lr, s.lg, s.lb)
+    if s.rightText and s.rightShown then
+      rightFS:SetText(s.rightText)
+      rightFS:SetTextColor(s.rr, s.rg, s.rb)
+      rightFS:Show()
+    else
+      rightFS:SetText("")
+      rightFS:Hide()
+    end
+  end
+
+  -- Force tooltip to recalculate its layout.
+  tooltip:Show()
 end
 
 
--- Wrapper for SetTooltipMoney that uses pcall to catch rare taint errors.
--- These can occur in corner cases when the money frame is shown during secure contexts.
-local function SafeSetTooltipMoney(...)
-  local success, err = pcall(SetTooltipMoney, ...)
-  if not success then
-    -- Silently ignore taint errors - the tooltip will just lack the sell price in these rare cases.
-    -- print("SellPricePerUnit: SetTooltipMoney failed:", err)
+-- In retail (>= 10.0.2), we add our "Sell Price Per Unit" money line using
+-- pre-created TooltipMoneyFrameTemplate frames.
+--
+-- THE PROBLEM:
+-- Tooltip hooks registered via TooltipDataProcessor.AddTooltipPostCall fire
+-- inside securecallfunction. When our addon previously called Blizzard's
+-- SetTooltipMoney from this context, it ran MoneyFrame_Update in our addon's
+-- tainted (insecure) execution context, which called SetWidth()/SetText() on
+-- the GameTooltipMoneyFrame's coin buttons — tainting those widgets.
+-- GameTooltipMoneyFrame objects persist in _G across tooltip displays.  On a
+-- subsequent tooltip, Blizzard's own secure SellPrice handler reuses the same
+-- frame and calls MoneyFrame_Update, which does layout math:
+--       width = width + goldButton:GetWidth()        (MoneyFrame.lua:307)
+-- goldButton:GetWidth() returns a secret ("tainted by SellPricePerUnit")
+-- because the button was previously modified from our insecure context.
+-- The arithmetic crashes: "attempt to perform arithmetic on a secret number".
+--
+-- THE FIX:
+-- We never call SetTooltipMoney, so Blizzard's GameTooltipMoneyFrame stays
+-- untouched.  Instead we:
+-- * Pre-create our OWN TooltipMoneyFrameTemplate frames at addon LOAD TIME
+--   (outside securecallfunction).
+-- * Use SPPU_MoneyFrame_Update() which sets each coin button's width from
+--   pre-measured values (measured at load time, untainted context), never
+--   calling GetWidth()/GetTextWidth()/GetStringWidth() at runtime.
+--   Buttons are anchored LEFT-to-RIGHT from the prefix text with SetPoint(),
+--   avoiding Blizzard's RIGHT-to-LEFT width-accumulation arithmetic entirely.
+-- * InsertMoneyLine inserts a blank line via InsertTooltipLines (for height)
+--   and overlays the pre-created frame on it.  Tooltip minimum width is
+--   computed from btn.Text:GetStringWidth() on each shown coin button,
+--   guarded by issecretvalue().  If any measurement is secret, we fall back
+--   to pre-measured component widths (prefix, coin text per digit count, icon).
+
+-- Pre-create frames at load time using Blizzard's template.
+local SPPU_POOL_SIZE = 3  -- max 2 per tooltip (total + per-unit) + 1 spare
+local sppuFramePool = {}
+
+if select(4, GetBuildInfo()) >= 100002 then
+  for i = 1, SPPU_POOL_SIZE do
+    local f = CreateFrame("Frame", "SPPUMoneyFrame" .. i, UIParent, "TooltipMoneyFrameTemplate")
+    MoneyFrame_SetType(f, "STATIC")
+    -- Prevent the template's OnShow from calling MoneyFrame_UpdateMoney ->
+    -- MoneyFrame_Update, which uses GetWidth() and sets conflicting anchors.
+    f:SetScript("OnShow", nil)
+    -- SuffixText is a FontString that MoneyFrame_Update anchors after the copper
+    -- button for optional trailing labels (e.g. "/week").  We never set one, so
+    -- clear it once at creation to prevent stale text from ever appearing.
+    if f.SuffixText then f.SuffixText:SetText("") end
+    f:Hide()
+    sppuFramePool[i] = f
   end
-  return success
+end
+
+local function SPPU_AcquireFrame()
+  for _, f in ipairs(sppuFramePool) do
+    if not f:IsShown() then return f end
+  end
+  -- Safety fallback — should never happen with our pool size.
+  local f = CreateFrame("Frame", "SPPUMoneyFrame" .. (#sppuFramePool + 1), UIParent, "TooltipMoneyFrameTemplate")
+  MoneyFrame_SetType(f, "STATIC")
+  f:SetScript("OnShow", nil)
+  -- See pool creation above for why we clear SuffixText.
+  if f.SuffixText then f.SuffixText:SetText("") end
+  sppuFramePool[#sppuFramePool + 1] = f
+  return f
+end
+
+-- Update coin buttons using LEFT-to-RIGHT relative anchoring.
+local SPPU_PREFIX_XOFFSET = 4   -- matches SetTooltipMoney's xOffset
+local SPPU_PREFIX_GAP     = 13  -- gap prefix→first coin (≈ iconWidth)
+local SPPU_COIN_GAP       = 4   -- gap between denomination groups
+
+-- Icon width for the SmallMoneyFrameTemplate coin buttons (MONEY_ICON_WIDTH_SMALL).
+local SPPU_SMALL_ICON_WIDTH = 13
+
+-- Pre-measured component widths for computing button sizes and tooltip minimum
+-- width.  At runtime inside securecallfunction, our addon-created frames return
+-- secret values from widget getters (GetStringWidth, GetWidth, etc.).  We
+-- therefore cannot measure text widths live.  Instead we pre-measure them at
+-- load time (outside securecallfunction — untainted context) and use the stored
+-- values for SetWidth() in SPPU_MoneyFrame_Update and for computing tooltip
+-- minimum width in SPPU_ComputeMinWidth.
+--
+-- All coin buttons use the same font, so a single button suffices for
+-- measuring any denomination's text width.  Silver/copper are always 0–99,
+-- so we measure the max ("99") once — slightly overestimates for 1-digit
+-- values, but never underestimates.  Gold can be arbitrarily wide due to
+-- BreakUpLargeNumbers (e.g. "1,234"), so we measure a representative value
+-- for each formatted string length up to 999,999g.
+local SPPU_PREFIX_TEXT_WIDTH = 0   -- width of per-unit prefix text
+local SPPU_SC_TEXT_WIDTH     = 0   -- text width of "99" (max silver/copper)
+local SPPU_SC_BUTTON_WIDTH   = 0   -- SPPU_SC_TEXT_WIDTH + SPPU_SMALL_ICON_WIDTH
+local SPPU_GOLD_TEXT_WIDTH   = {}  -- gold text width keyed by formatted string length
+
+if select(4, GetBuildInfo()) >= 100002 then
+  local f = sppuFramePool[1]
+  local prefix = string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM)
+  f.PrefixText:SetText(prefix)
+  SPPU_PREFIX_TEXT_WIDTH = f.PrefixText:GetStringWidth()
+
+  -- All coin buttons share the same font — use any one for measurement.
+  local btn = f.CopperButton
+  btn.Text:SetText("99")
+  SPPU_SC_TEXT_WIDTH = btn.Text:GetStringWidth()
+  SPPU_SC_BUTTON_WIDTH = SPPU_SC_TEXT_WIDTH + SPPU_SMALL_ICON_WIDTH
+
+  -- Gold: measure BreakUpLargeNumbers output for each formatted string length.
+  -- 9 → "9" (1 char), 99 → "99" (2), 999 → "999" (3),
+  -- 9999 → "9,999" (5), 99999 → "99,999" (6), 999999 → "999,999" (7).
+  for _, g in ipairs({9, 99, 999, 9999, 99999, 999999}) do
+    local s = BreakUpLargeNumbers(g)
+    btn.Text:SetText(s)
+    SPPU_GOLD_TEXT_WIDTH[#s] = btn.Text:GetStringWidth()
+  end
+
+  f.PrefixText:SetText("")
+  btn.Text:SetText("")
+  f:Hide()
+end
+
+local function SPPU_MoneyFrame_Update(frame, money, prefix)
+  local gold   = math_floor(money / 10000)
+  local silver = math_floor(money / 100) % 100
+  local copper = money % 100
+
+  -- Set prefix text.
+  if frame.PrefixText then
+    frame.PrefixText:SetText(prefix)
+    frame.PrefixText:Show()
+  end
+
+  -- Configure coin buttons.
+  local goldBtn   = frame.GoldButton
+  local silverBtn = frame.SilverButton
+  local copperBtn = frame.CopperButton
+
+  if gold > 0 then
+    local goldStr = BreakUpLargeNumbers(gold)
+    goldBtn.Text:SetText(goldStr)
+    -- Use pre-measured gold text width — GetStringWidth() returns a secret
+    -- on addon-created frames inside securecallfunction.
+    local tw = SPPU_GOLD_TEXT_WIDTH[#goldStr]
+    if not tw then
+      for _, w in pairs(SPPU_GOLD_TEXT_WIDTH) do
+        if not tw or w > tw then tw = w end
+      end
+    end
+    goldBtn:SetWidth(tw + SPPU_SMALL_ICON_WIDTH)
+    goldBtn:Show()
+  else
+    goldBtn:Hide()
+  end
+
+  if silver > 0 then
+    silverBtn.Text:SetText(silver)
+    silverBtn:SetWidth(SPPU_SC_BUTTON_WIDTH)
+    silverBtn:Show()
+  else
+    silverBtn:Hide()
+  end
+
+  if copper > 0 then
+    copperBtn.Text:SetText(copper)
+    copperBtn:SetWidth(SPPU_SC_BUTTON_WIDTH)
+    copperBtn:Show()
+  else
+    copperBtn:Hide()
+  end
+
+  -- Blizzard's MoneyFrame_Update anchors RIGHT-to-LEFT: it pins copperButton to
+  -- the frame's RIGHT edge, chains silver and gold leftward, then accumulates
+  -- width via GetWidth() on each button (the line that crashes — see above).
+  -- We anchor LEFT-to-RIGHT from PrefixText instead.  Our frame is pinned to
+  -- tooltip's TextLeft by its LEFT edge, so the frame's right edge is irrelevant.
+  -- Each button's width is set from pre-measured text widths (not live
+  -- GetStringWidth(), which returns a secret on our addon-created frames)
+  -- so the next button anchors correctly to the previous button's RIGHT edge.
+  local prevAnchor = frame.PrefixText
+  local gap = SPPU_PREFIX_GAP
+  for _, btn in ipairs({ goldBtn, silverBtn, copperBtn }) do
+    if btn:IsShown() then
+      btn:ClearAllPoints()
+      btn:SetPoint("LEFT", prevAnchor, "RIGHT", gap, 0)
+      prevAnchor = btn
+      gap = SPPU_COIN_GAP
+    end
+  end
+end
+
+-- Compute tooltip minimum width from pre-measured component widths.
+-- Mirrors the live GetStringWidth() path but uses load-time measurements.
+local function SPPU_ComputeMinWidth(gold, silver, copper)
+  local total = SPPU_PREFIX_XOFFSET + SPPU_PREFIX_TEXT_WIDTH
+  local gap = SPPU_PREFIX_GAP
+
+  if gold > 0 then
+    local goldStr = BreakUpLargeNumbers(gold)
+    local tw = SPPU_GOLD_TEXT_WIDTH[#goldStr]
+    if not tw then
+      -- Gold has more digits than we pre-measured; use the widest known width.
+      for _, w in pairs(SPPU_GOLD_TEXT_WIDTH) do
+        if not tw or w > tw then tw = w end
+      end
+    end
+    total = total + gap + tw + SPPU_SMALL_ICON_WIDTH
+    gap = SPPU_COIN_GAP
+  end
+
+  if silver > 0 then
+    total = total + gap + SPPU_SC_TEXT_WIDTH + SPPU_SMALL_ICON_WIDTH
+    gap = SPPU_COIN_GAP
+  end
+
+  if copper > 0 then
+    total = total + gap + SPPU_SC_TEXT_WIDTH + SPPU_SMALL_ICON_WIDTH
+  end
+
+  return math_ceil(total) + 20  -- +20 for tooltip left/right insets
+end
+
+-- Insert a properly-rendered money line at insertPoint in the tooltip.
+-- InsertTooltipLines adds a blank " " line (for height) and shifts
+-- subsequent lines down.  The SPPU frame overlays that blank line.
+local function InsertMoneyLine(tooltip, insertPoint, money, prefix)
+  local gold   = math_floor(money / 10000)
+  local silver = math_floor(money / 100) % 100
+  local copper = money % 100
+
+  -- Acquire and populate the frame first so the coin button texts are set,
+  -- letting us attempt to read their rendered string widths.
+  local frame = SPPU_AcquireFrame()
+  SPPU_MoneyFrame_Update(frame, money, prefix)
+
+  -- Try to compute the actual displayed width from button text string widths,
+  -- mirroring what MoneyFrame_Update does (textWidth + iconWidth per button).
+  -- issecretvalue() guards every measurement; if any is secret (which happens
+  -- on our addon-created frames inside securecallfunction) we fall back to
+  -- pre-measured component widths from load time.
+  local minWidth
+  do
+    local total  = SPPU_PREFIX_XOFFSET
+    local secret = false
+
+    if frame.PrefixText then
+      local pw = frame.PrefixText:GetStringWidth()
+      if issecretvalue(pw) then secret = true else total = total + pw end
+    end
+
+    if not secret then
+      local gap = SPPU_PREFIX_GAP
+      for _, btn in ipairs({ frame.GoldButton, frame.SilverButton, frame.CopperButton }) do
+        if btn:IsShown() then
+          local tw = btn.Text:GetStringWidth()
+          if issecretvalue(tw) then secret = true; break end
+          total = total + gap + tw + SPPU_SMALL_ICON_WIDTH
+          gap = SPPU_COIN_GAP
+        end
+      end
+    end
+
+    if secret then
+      minWidth = SPPU_ComputeMinWidth(gold, silver, copper)
+      -- print("SPPU: secret width, fallback minWidth =", minWidth, "(gold="..gold..", silver="..silver..", copper="..copper..")")
+    else
+      minWidth = math_ceil(total) + 20  -- +20 for tooltip left/right insets
+    end
+  end
+
+  tooltip:SetMinimumWidth(minWidth)
+  InsertTooltipLines(tooltip, insertPoint, {{ text = " ", r = 1, g = 1, b = 1 }})
+  local lineNum = insertPoint + 1
+  frame:SetParent(tooltip)
+  frame:ClearAllPoints()
+  frame:SetPoint("LEFT", _G[tooltip:GetName() .. "TextLeft" .. lineNum], "LEFT", SPPU_PREFIX_XOFFSET, 0)
+  frame:Show()
+  -- Register for cleanup via SharedTooltip_ClearInsertedFrames.
+  if not tooltip.insertedFrames then tooltip.insertedFrames = {} end
+  tinsert(tooltip.insertedFrames, frame)
+end
+
+-- Text-based fallback using AddLine + atlas markup — used for the merchant
+-- fast-path (MerchantFrame) where we just append at the end.
+local ICON_SIZE = 13
+
+local function FormatMoneyAtlas(money)
+  local gold = math_floor(money / 10000)
+  local silver = math_floor(money / 100) % 100
+  local copper = money % 100
+
+  local parts = {}
+  if gold > 0 then
+    parts[#parts + 1] = BreakUpLargeNumbers(gold) .. CreateAtlasMarkup("coin-gold", ICON_SIZE, ICON_SIZE)
+  end
+  if silver > 0 then
+    parts[#parts + 1] = silver .. CreateAtlasMarkup("coin-silver", ICON_SIZE, ICON_SIZE)
+  end
+  if copper > 0 or #parts == 0 then
+    parts[#parts + 1] = copper .. CreateAtlasMarkup("coin-copper", ICON_SIZE, ICON_SIZE)
+  end
+
+  return table.concat(parts, " ")
+end
+
+local function AddMoneyLine(tooltip, money, prefix)
+  tooltip:AddLine(prefix .. "   " .. FormatMoneyAtlas(money), 1, 1, 1, false)
 end
 
 
@@ -286,8 +633,8 @@ local function AddSellPrice(tooltip, tooltipData)
   local merchantFrameOpen = MerchantFrame and MerchantFrame:IsShown()
 
 
-  -- Flags to indicate whether we should inser money frame or unsellable label. (TODO: Really needed?)
-  local insertNewMoneyFrame = false
+  -- Flags to indicate whether we should insert sell price or unsellable label. (TODO: Really needed?)
+  local insertNewSellPrice = false
   local insertUnsellable = false
 
   -- After which line should we insert the money frame or unsellable label?
@@ -355,9 +702,9 @@ local function AddSellPrice(tooltip, tooltipData)
       -- Before 10.0.2, we can just add the money frame, because due to our
       -- pre-hook we can be sure that we are the first added line.
       if select(4, GetBuildInfo()) < 100002 then
-        SafeSetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+        SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
         if stackCount > 1 then
-          SafeSetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+          SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
         end
         return
 
@@ -369,15 +716,15 @@ local function AddSellPrice(tooltip, tooltipData)
         if merchantFrameOpen then
           local owner = tooltip:GetOwner()
           if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
-            SafeSetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
+            AddMoneyLine(tooltip, itemSellPrice*stackCount, string_format("%s:", SELL_PRICE))
             if stackCount > 1 then
-              SafeSetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+              AddMoneyLine(tooltip, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
             end
             return
           end
         end
 
-        insertNewMoneyFrame = true
+        insertNewSellPrice = true
         insertAfterLine = GetLastTooltipLine(tooltipData.guid, itemId)
 
       end
@@ -427,71 +774,26 @@ local function AddSellPrice(tooltip, tooltipData)
   if not insertAfterLine then return end
 
 
-
-  -- Store all text and text colours of the original tooltip lines.
-  -- TODO: Unfortunately I do not know how to store the "intended word wrap".
-  --       Therefore, we have to put wrap=true for all lines in the new tooltip.
-  local leftText = {}
-  local leftTextR = {}
-  local leftTextG = {}
-  local leftTextB = {}
-
-  local rightText = {}
-  local rightTextR = {}
-  local rightTextG = {}
-  local rightTextB = {}
-
-  -- Store the number of lines for after ClearLines().
-  local numLines = tooltip:NumLines()
-
-  -- Store all lines of the original tooltip.
-  for i = 1, numLines, 1 do
-
-    -- Happens when the Appearances->Sets tab is opened with BetterWardrobe running.
-    if not _G[tooltip:GetName().."TextLeft"..i] or not _G[tooltip:GetName().."TextRight"..i] then return end
-
-    leftText[i] = _G[tooltip:GetName().."TextLeft"..i]:GetText()
-    leftTextR[i], leftTextG[i], leftTextB[i] = _G[tooltip:GetName().."TextLeft"..i]:GetTextColor()
-
-    rightText[i] = _G[tooltip:GetName().."TextRight"..i]:GetText()
-    rightTextR[i], rightTextG[i], rightTextB[i] = _G[tooltip:GetName().."TextRight"..i]:GetTextColor()
-  end
-
-
-  tooltip:ClearLines()
-  -- Got to override GameTooltip.GetItem(), such that other addons can still use it
-  -- to learn which item is displayed. Will be restored after GameTooltip:OnHide() (see above).
-  tooltip.GetItem = function() return name, link end
-
-
-  -- Never word wrap the title line!
-  AddLineOrDoubleLine(tooltip, leftText[1], rightText[1], leftTextR[1], leftTextG[1], leftTextB[1], rightTextR[1], rightTextG[1], rightTextB[1], false)
-
-  -- Refill the tooltip with the stored lines plus the new "per unit" money frame.
-  for i = 2, insertAfterLine, 1 do
-    AddLineOrDoubleLine(tooltip, leftText[i], rightText[i], leftTextR[i], leftTextG[i], leftTextB[i], rightTextR[i], rightTextG[i], rightTextB[i], true)
-  end
-
   if insertUnsellable then
-    tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
-  elseif textSellPriceLine then
-    -- Add text-based "Sell Price per Unit" line (for Baganator compatibility)
-    local perUnitText = string_format("%s %s: %s", SELL_PRICE, AUCTION_PRICE_PER_ITEM, GetMoneyString(itemSellPrice, true))
-    tooltip:AddLine(perUnitText, 1, 1, 1, true)
-  else
-    SafeSetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
-    if stackCount > 1 then
-      SafeSetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
-    end
+    -- Unsellable label is plain text — use InsertTooltipLines.
+    InsertTooltipLines(tooltip, insertAfterLine, {{ text = ITEM_UNSELLABLE, r = 1, g = 1, b = 1 }})
 
-    -- If this was no new money frame added, we skip the old money frame of the recorded lines.
-    if not insertNewMoneyFrame then
+  elseif textSellPriceLine then
+    -- Per-unit line for Baganator's text-based sell price.
+    InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+
+  else
+    -- When Blizzard has a money frame, skip its blank line so we insert after it.
+    if not insertNewSellPrice then
+      insertAfterLine = insertAfterLine + 1
+    else
+      -- We are adding a new sell price (Blizzard didn't show one).
+      InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice * stackCount, string_format("%s:", SELL_PRICE))
       insertAfterLine = insertAfterLine + 1
     end
-  end
-
-  for i = insertAfterLine + 1, numLines, 1 do
-    AddLineOrDoubleLine(tooltip, leftText[i], rightText[i], leftTextR[i], leftTextG[i], leftTextB[i], rightTextR[i], rightTextG[i], rightTextB[i], true)
+    if stackCount > 1 then
+      InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+    end
   end
 
 end
@@ -579,9 +881,8 @@ else
 
 
   -- I have to set my hook after all other tooltip addons.
-  -- Because I am doing a ClearLines(), which may cause other addons (like BagSync)
-  -- to clear the attribute they are using to only execute on the first of the
-  -- two calls of OnTooltipSetItem().
+  -- Because other addons (like BagSync) may use an attribute that tracks
+  -- which call of OnTooltipSetItem() they are on.
   -- Therefore take this timer!
   local startupFrame = CreateFrame("Frame")
   startupFrame:RegisterEvent("PLAYER_LOGIN")
