@@ -780,7 +780,11 @@ local function AddSellPrice(tooltip, tooltipData)
 
   elseif textSellPriceLine then
     -- Per-unit line for Baganator's text-based sell price.
-    InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+    if select(4, GetBuildInfo()) < 100002 then
+      SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+    else
+      InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+    end
 
   else
     -- When Blizzard has a money frame, skip its blank line so we insert after it.
@@ -788,11 +792,19 @@ local function AddSellPrice(tooltip, tooltipData)
       insertAfterLine = insertAfterLine + 1
     else
       -- We are adding a new sell price (Blizzard didn't show one).
-      InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice * stackCount, string_format("%s:", SELL_PRICE))
+      if select(4, GetBuildInfo()) < 100002 then
+        SetTooltipMoney(tooltip, itemSellPrice * stackCount, nil, string_format("%s:", SELL_PRICE))
+      else
+        InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice * stackCount, string_format("%s:", SELL_PRICE))
+      end
       insertAfterLine = insertAfterLine + 1
     end
     if stackCount > 1 then
-      InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+      if select(4, GetBuildInfo()) < 100002 then
+        SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+      else
+        InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+      end
     end
   end
 
