@@ -106,7 +106,7 @@ end
 -- inside securecallfunction. When our addon previously called Blizzard's
 -- SetTooltipMoney from this context, it ran MoneyFrame_Update in our addon's
 -- tainted (insecure) execution context, which called SetWidth()/SetText() on
--- the GameTooltipMoneyFrame's coin buttons — tainting those widgets.
+-- the GameTooltipMoneyFrame's coin buttons - tainting those widgets.
 -- GameTooltipMoneyFrame objects persist in _G across tooltip displays.  On a
 -- subsequent tooltip, Blizzard's own secure SellPrice handler reuses the same
 -- frame and calls MoneyFrame_Update, which does layout math:
@@ -155,7 +155,7 @@ local function SPPU_AcquireFrame()
   for _, f in ipairs(sppuFramePool) do
     if not f:IsShown() then return f end
   end
-  -- Safety fallback — should never happen with our pool size.
+  -- Safety fallback - should never happen with our pool size.
   local f = CreateFrame("Frame", "SPPUMoneyFrame" .. (#sppuFramePool + 1), UIParent, "TooltipMoneyFrameTemplate")
   MoneyFrame_SetType(f, "STATIC")
   f:SetScript("OnShow", nil)
@@ -177,13 +177,13 @@ local SPPU_SMALL_ICON_WIDTH = 13
 -- width.  At runtime inside securecallfunction, our addon-created frames return
 -- secret values from widget getters (GetStringWidth, GetWidth, etc.).  We
 -- therefore cannot measure text widths live.  Instead we pre-measure them at
--- load time (outside securecallfunction — untainted context) and use the stored
+-- load time (outside securecallfunction - untainted context) and use the stored
 -- values for SetWidth() in SPPU_MoneyFrame_Update and for computing tooltip
 -- minimum width in SPPU_ComputeMinWidth.
 --
 -- All coin buttons use the same font, so a single button suffices for
 -- measuring any denomination's text width.  Silver/copper are always 0–99,
--- so we measure the max ("99") once — slightly overestimates for 1-digit
+-- so we measure the max ("99") once - slightly overestimates for 1-digit
 -- values, but never underestimates.  Gold can be arbitrarily wide due to
 -- BreakUpLargeNumbers (e.g. "1,234"), so we measure a representative value
 -- for each formatted string length up to 999,999g.
@@ -198,7 +198,7 @@ if select(4, GetBuildInfo()) >= 100002 then
   f.PrefixText:SetText(prefix)
   SPPU_PREFIX_TEXT_WIDTH = f.PrefixText:GetStringWidth()
 
-  -- All coin buttons share the same font — use any one for measurement.
+  -- All coin buttons share the same font - use any one for measurement.
   local btn = f.CopperButton
   btn.Text:SetText("99")
   SPPU_SC_TEXT_WIDTH = btn.Text:GetStringWidth()
@@ -237,7 +237,7 @@ local function SPPU_MoneyFrame_Update(frame, money, prefix)
   if gold > 0 then
     local goldStr = BreakUpLargeNumbers(gold)
     goldBtn.Text:SetText(goldStr)
-    -- Use pre-measured gold text width — GetStringWidth() returns a secret
+    -- Use pre-measured gold text width - GetStringWidth() returns a secret
     -- on addon-created frames inside securecallfunction.
     local tw = SPPU_GOLD_TEXT_WIDTH[#goldStr]
     if not tw then
@@ -269,7 +269,7 @@ local function SPPU_MoneyFrame_Update(frame, money, prefix)
 
   -- Blizzard's MoneyFrame_Update anchors RIGHT-to-LEFT: it pins copperButton to
   -- the frame's RIGHT edge, chains silver and gold leftward, then accumulates
-  -- width via GetWidth() on each button (the line that crashes — see above).
+  -- width via GetWidth() on each button (the line that crashes - see above).
   -- We anchor LEFT-to-RIGHT from PrefixText instead.  Our frame is pinned to
   -- tooltip's TextLeft by its LEFT edge, so the frame's right edge is irrelevant.
   -- Each button's width is set from pre-measured text widths (not live
@@ -378,7 +378,7 @@ local function InsertMoneyLine(tooltip, insertPoint, money, prefix)
   tinsert(tooltip.insertedFrames, frame)
 end
 
--- Text-based fallback using AddLine + atlas markup — used for the merchant
+-- Text-based fallback using AddLine + atlas markup - used for the merchant
 -- fast-path (MerchantFrame) where we just append at the end.
 local ICON_SIZE = 13
 
@@ -775,7 +775,7 @@ local function AddSellPrice(tooltip, tooltipData)
 
 
   if insertUnsellable then
-    -- Unsellable label is plain text — use InsertTooltipLines.
+    -- Unsellable label is plain text - use InsertTooltipLines.
     InsertTooltipLines(tooltip, insertAfterLine, {{ text = ITEM_UNSELLABLE, r = 1, g = 1, b = 1 }})
 
   elseif textSellPriceLine then
