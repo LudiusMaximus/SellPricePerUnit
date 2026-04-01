@@ -502,24 +502,6 @@ local function IsRuneforgeLegendary(guid)
 end
 
 
--- Check if there's a text-based sell price line (e.g. from Baganator)
-local function HasTextBasedSellPrice(tooltip)
-  for i = 1, tooltip:NumLines() do
-    local line = _G[tooltip:GetName().."TextLeft"..i]
-    if line then
-      local text = line:GetText()
-      if text then
-        -- Strip color codes before checking (|cXXXXXXXX at start, |r at end)
-        local strippedText = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
-        if strippedText:match("^"..SELL_PRICE) then
-          return i
-        end
-      end
-    end
-  end
-  return nil
-end
-
 
 local function AddSellPrice(tooltip, tooltipData)
 
@@ -640,20 +622,6 @@ local function AddSellPrice(tooltip, tooltipData)
   -- After which line should we insert the money frame or unsellable label?
   local insertAfterLine = nil
 
-
-  -- Check if there's a text-based sell price (e.g. from Baganator)
-  local textSellPriceLine = HasTextBasedSellPrice(tooltip)
-  
-  -- If there's a text-based sell price, add text-based per-unit line if needed
-  if textSellPriceLine then
-    if stackCount == 1 then
-      -- Single item with text-based sell price already present, nothing to do
-      return
-    end
-    
-    -- For stacks, we need to insert the per-unit line right after the sell price line
-    insertAfterLine = textSellPriceLine
-  end
 
   -- If there is no money frame, we always add one.
   if not tooltip.shownMoneyFrames then
@@ -777,14 +745,6 @@ local function AddSellPrice(tooltip, tooltipData)
   if insertUnsellable then
     -- Unsellable label is plain text - use InsertTooltipLines.
     InsertTooltipLines(tooltip, insertAfterLine, {{ text = ITEM_UNSELLABLE, r = 1, g = 1, b = 1 }})
-
-  elseif textSellPriceLine then
-    -- Per-unit line for Baganator's text-based sell price.
-    if select(4, GetBuildInfo()) < 100002 then
-      SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
-    else
-      InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
-    end
 
   else
     -- When Blizzard has a money frame, skip its blank line so we insert after it.
