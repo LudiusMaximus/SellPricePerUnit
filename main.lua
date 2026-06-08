@@ -13,6 +13,13 @@ local GetBuildInfo = _G.GetBuildInfo
 local GetMouseFoci = _G.GetMouseFoci
 local MerchantFrame = _G.MerchantFrame
 
+-- The 4th GetBuildInfo() return is the interface/TOC version (e.g. 50504, 100002,
+-- 120005), constant for the session.  100002 (retail 10.0.2) is the cutoff: at or
+-- above it the live GameTooltip routes through TooltipDataProcessor; below it (all
+-- Classic flavors) we use the legacy OnTooltipSetItem pre-hook.
+local tocVersion = select(4, GetBuildInfo())
+local usesModernTooltipApi = tocVersion >= 100002
+
 local C_Item_GetItemInfo = _G.C_Item.GetItemInfo
 local C_Item_GetItemLocation = _G.C_Item.GetItemLocation
 
@@ -23,10 +30,31 @@ local C_TooltipInfo_GetItemByID = C_TooltipInfo and _G.C_TooltipInfo.GetItemByID
 local issecretvalue = _G.issecretvalue or function() return false end
 
 local SELL_PRICE = _G.SELL_PRICE
+local SELL_PRICE_COLON = SELL_PRICE .. ":"   -- "Sell Price:" prefix, reused often
 local AUCTION_PRICE_PER_ITEM = _G.AUCTION_PRICE_PER_ITEM
+local SELL_PRICE_PER_UNIT_COLON = SELL_PRICE .. " " .. AUCTION_PRICE_PER_ITEM .. ":"   -- "Sell Price <per unit>:" prefix
 local ITEM_UNSELLABLE = _G.ITEM_UNSELLABLE
 local LE_ITEM_CLASS_RECIPE = _G.LE_ITEM_CLASS_RECIPE
 local LOCKED_WITH_ITEM = _G.LOCKED_WITH_ITEM
+
+-- Name pattern for the tooltip owner / mouse-focus frame of an item shown in the
+-- merchant list (e.g. "MerchantItem4ItemButton").
+local MERCHANT_ITEM_PATTERN = "^MerchantItem"
+
+-- LE_ITEM_CLASS_RECIPE / LE_ITEM_RECIPE_BOOK are nil on modern clients (including
+-- MoP Classic 5.5.4); prefer the Enum and fall back to the old constants for
+-- older Classic flavors.
+local ITEMCLASS_RECIPE = (Enum and Enum.ItemClass and Enum.ItemClass.Recipe) or LE_ITEM_CLASS_RECIPE
+local ITEMSUBCLASS_RECIPE_BOOK = (Enum and Enum.ItemRecipeSubclass and Enum.ItemRecipeSubclass.Book) or _G.LE_ITEM_RECIPE_BOOK
+local HIGHLIGHT_FONT_COLOR = _G.HIGHLIGHT_FONT_COLOR
+
+-- MoP Classic and retail render tooltip money as atlas-coin text via this
+-- formatter (GameTooltip_OnTooltipAddMoney -> MoneyFormatterUtil.FormatMoney).
+-- Older Classic flavors lack it (and the coin atlases) and don't show a native
+-- sell price line at all, so we feature-detect and fall back to money frames there.
+local MoneyFormatterUtil = _G.MoneyFormatterUtil
+local GameTooltipMoneyFormat = _G.GameTooltipMoneyFormat
+local hasMoneyFormatter = MoneyFormatterUtil ~= nil and GameTooltipMoneyFormat ~= nil
 
 
 -- Insert new lines into a tooltip after a given line number, shifting subsequent
@@ -135,7 +163,7 @@ end
 local SPPU_POOL_SIZE = 3  -- max 2 per tooltip (total + per-unit) + 1 spare
 local sppuFramePool = {}
 
-if select(4, GetBuildInfo()) >= 100002 then
+if usesModernTooltipApi then
   for i = 1, SPPU_POOL_SIZE do
     local f = CreateFrame("Frame", "SPPUMoneyFrame" .. i, UIParent, "TooltipMoneyFrameTemplate")
     MoneyFrame_SetType(f, "STATIC")
@@ -192,9 +220,9 @@ local SPPU_SC_TEXT_WIDTH     = 0   -- text width of "99" (max silver/copper)
 local SPPU_SC_BUTTON_WIDTH   = 0   -- SPPU_SC_TEXT_WIDTH + SPPU_SMALL_ICON_WIDTH
 local SPPU_GOLD_TEXT_WIDTH   = {}  -- gold text width keyed by formatted string length
 
-if select(4, GetBuildInfo()) >= 100002 then
+if usesModernTooltipApi then
   local f = sppuFramePool[1]
-  local prefix = string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM)
+  local prefix = SELL_PRICE_PER_UNIT_COLON
   f.PrefixText:SetText(prefix)
   SPPU_PREFIX_TEXT_WIDTH = f.PrefixText:GetStringWidth()
 
@@ -406,16 +434,42 @@ local function AddMoneyLine(tooltip, money, prefix)
 end
 
 
+-- True if the tooltip already shows a native "Sell Price:" line.  In MoP Classic
+-- the game renders the sell price as plain highlight text (not a money frame), so
+-- tooltip.shownMoneyFrames stays nil; we scan the line text to avoid duplicating it.
+local function TooltipHasNativeSellPrice(tooltip)
+  local name = tooltip:GetName()
+  if not name then return false end
+  local prefix = SELL_PRICE_COLON
+  for i = 1, tooltip:NumLines() do
+    local fs = _G[name .. "TextLeft" .. i]
+    local text = fs and fs:GetText()
+    if text and string_find(text, prefix, 1, true) == 1 then
+      return true
+    end
+  end
+  return false
+end
+
+-- Add a money line matching Blizzard's native tooltip sell-price style (high-res
+-- atlas coins), reusing the game's own formatter so it lines up with the native
+-- line pixel-for-pixel.  Only valid when hasMoneyFormatter.
+local function AddNativeMoneyLine(tooltip, money, prefix)
+  local text = string_format("%s %s", prefix, MoneyFormatterUtil.FormatMoney(money, GameTooltipMoneyFormat))
+  tooltip:AddLine(text, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b, false)
+end
+
+
 -- Normally, we want the money frame or unsellable label to appear in the tooltip
 -- at the bottom of the all other WoW stock tooltip lines; i.e. before any other addon
 -- has added further lines to the tooltip.
 -- Before 10.0.2 this was able with a pre-hook.
 -- After 10.0.2, we try to determine the tooltip line after which to insert
 -- by the number of lines returned by GetItemByGUID (or GetItemByID).
--- This works OK for bag items (except that class restriction lines may be ommitted in the actual tooltip).
+-- This works OK for bag items (except that class restriction lines may be omitted in the actual tooltip).
 -- For items sold in a merchant frame, it not good enough! Because the actual tooltip can have so many
 -- more lines added to the stock tooltip, which are not returned by GetItemByGUID
--- (e.g. Renown required, Season, Upgrade Level, "Shift click to by a different amount").
+-- (e.g. Renown required, Season, Upgrade Level, "Shift click to buy a different amount").
 -- Taking care of all these special cases would be too much of a pain for the little gain.
 -- We prefer GUID, as it gives the more realistic tooltip. (E.g. for Shadowlands Crafted Legendaries it
 -- shows the tooltip of the enchantment and not just that of the base item. Also RestrictedRaceClass lines
@@ -444,20 +498,20 @@ local function GetLastTooltipLine(guid, itemId)
 
 
   local lastLine = 1
-  local ingnoredLines = 0
+  local ignoredLines = 0
   while tooltipLines[lastLine] do
     -- print(lastLine .. ":", tooltipLines[lastLine].leftText)
 
     -- If this tooltip was not created from GUID, we have to ignore class restriction lines by checking the line type.
     if not guid and tooltipLines[lastLine].type == Enum.TooltipDataLineType.RestrictedRaceClass then
       -- print("IGNORING")
-      ingnoredLines = ingnoredLines + 1
+      ignoredLines = ignoredLines + 1
     end
 
     lastLine = lastLine + 1
   end
 
-  return lastLine - ingnoredLines - 1
+  return lastLine - ignoredLines - 1
 
 end
 
@@ -516,7 +570,7 @@ local function AddSellPrice(tooltip, tooltipData)
 
   -- Got a report that "Sell Price Per Unit" blocked using a quest item through the quest tracker:
   -- https://legacy.curseforge.com/wow/addons/sell-price-per-unit?comment=18
-  -- I could not reproduce this, but I guess exclueding QuestObjectiveTracker items does not hurt.
+  -- I could not reproduce this, but I guess excluding QuestObjectiveTracker items does not hurt.
   local owner = tooltip:GetOwner()
   if owner and owner.GetParent then
     local ownerParent = owner:GetParent()
@@ -553,7 +607,7 @@ local function AddSellPrice(tooltip, tooltipData)
 
   -- Before 10.0.2, there was no tooltipData.
   -- TODO: See you for Shadowlands Classic to find a way to determine IsRuneforgeLegendary without it.
-  if select(4, GetBuildInfo()) >= 100002 then
+  if usesModernTooltipApi then
 
     -- If it is a Shadowlands Legendary and we have no GUID to make sure whether it is a Crafted Legendary, we abort.
     -- Because GetLastTooltipLine() cannot determine the correct insertAfterLine for these without GUID.
@@ -635,11 +689,11 @@ local function AddSellPrice(tooltip, tooltipData)
       -- When at a merchant, (most) bag items already get the unsellable label (except the "fixUnsellable" ones).
       -- So while we are at a merchant, we must not add the unsellable line to bag items;
       -- only to items in the merchant frame, which normally don't have these.
-      if not merchantFrameOpen or fixUnsellable or (focusFrame and focusFrame:GetName() and string_find(focusFrame:GetName(), "^MerchantItem")) then
+      if not merchantFrameOpen or fixUnsellable or (focusFrame and focusFrame:GetName() and string_find(focusFrame:GetName(), MERCHANT_ITEM_PATTERN)) then
 
         -- Before 10.0.2, we can just add the unsellable label, because due to our
         -- pre-hook we can be sure that we are the first added line.
-        if select(4, GetBuildInfo()) < 100002 then
+        if not usesModernTooltipApi then
           tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
           return
 
@@ -669,10 +723,24 @@ local function AddSellPrice(tooltip, tooltipData)
 
       -- Before 10.0.2, we can just add the money frame, because due to our
       -- pre-hook we can be sure that we are the first added line.
-      if select(4, GetBuildInfo()) < 100002 then
-        SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, string_format("%s:", SELL_PRICE))
-        if stackCount > 1 then
-          SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+      if not usesModernTooltipApi then
+        if hasMoneyFormatter then
+          -- MoP Classic shows the sell price as a native highlight text line
+          -- (atlas coins), not a money frame, so tooltip.shownMoneyFrames is nil.
+          -- Match that style; only add the total if the game isn't already showing
+          -- one (avoid the duplicate), and always add the per-unit line for stacks.
+          if not TooltipHasNativeSellPrice(tooltip) then
+            AddNativeMoneyLine(tooltip, itemSellPrice*stackCount, SELL_PRICE_COLON)
+          end
+          if stackCount > 1 then
+            AddNativeMoneyLine(tooltip, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
+          end
+        else
+          -- Older Classic flavors: no native sell price line; use money frames.
+          SetTooltipMoney(tooltip, itemSellPrice*stackCount, nil, SELL_PRICE_COLON)
+          if stackCount > 1 then
+            SetTooltipMoney(tooltip, itemSellPrice, nil, SELL_PRICE_PER_UNIT_COLON)
+          end
         end
         return
 
@@ -684,9 +752,9 @@ local function AddSellPrice(tooltip, tooltipData)
         if merchantFrameOpen then
           local owner = tooltip:GetOwner()
           if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
-            AddMoneyLine(tooltip, itemSellPrice*stackCount, string_format("%s:", SELL_PRICE))
+            AddMoneyLine(tooltip, itemSellPrice*stackCount, SELL_PRICE_COLON)
             if stackCount > 1 then
-              AddMoneyLine(tooltip, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+              AddMoneyLine(tooltip, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
             end
             return
           end
@@ -721,7 +789,7 @@ local function AddSellPrice(tooltip, tooltipData)
       -- TODO Did I not just add this above???
       -- or _G[moneyFrameName.."PrefixText"]:GetText() == nil
 
-      if _G[moneyFrameName.."PrefixText"]:GetText() == string_format("%s:", SELL_PRICE) then
+      if _G[moneyFrameName.."PrefixText"]:GetText() == SELL_PRICE_COLON then
 
         local _, moneyFrameAnchor = _G[moneyFrameName]:GetPoint(1)
 
@@ -752,18 +820,18 @@ local function AddSellPrice(tooltip, tooltipData)
       insertAfterLine = insertAfterLine + 1
     else
       -- We are adding a new sell price (Blizzard didn't show one).
-      if select(4, GetBuildInfo()) < 100002 then
-        SetTooltipMoney(tooltip, itemSellPrice * stackCount, nil, string_format("%s:", SELL_PRICE))
+      if not usesModernTooltipApi then
+        SetTooltipMoney(tooltip, itemSellPrice * stackCount, nil, SELL_PRICE_COLON)
       else
-        InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice * stackCount, string_format("%s:", SELL_PRICE))
+        InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice * stackCount, SELL_PRICE_COLON)
       end
       insertAfterLine = insertAfterLine + 1
     end
     if stackCount > 1 then
-      if select(4, GetBuildInfo()) < 100002 then
-        SetTooltipMoney(tooltip, itemSellPrice, nil, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+      if not usesModernTooltipApi then
+        SetTooltipMoney(tooltip, itemSellPrice, nil, SELL_PRICE_PER_UNIT_COLON)
       else
-        InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, string_format("%s %s:", SELL_PRICE, AUCTION_PRICE_PER_ITEM))
+        InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
       end
     end
   end
@@ -774,7 +842,7 @@ end
 
 
 -- After 10.0.2 we have to use this to alter the tooltip.
-if select(4, GetBuildInfo()) >= 100002 then
+if usesModernTooltipApi then
   TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, AddSellPrice)
 
 -- In classic, we use a pre-hook.
@@ -793,17 +861,55 @@ else
       end
     end
 
+    -- A product recipe fires OnTooltipSetItem twice in the same frame (same
+    -- GetTime()).  We record the time on the first call so we can recognise the
+    -- second (final) call and only then append the merchant sell price, making it
+    -- land at the very bottom of the finished tooltip.
+    local lastMerchantRecipeTime = 0
+
 
     GameTooltip:SetScript("OnTooltipSetItem", function(self, ...)
 
       local _, link = self:GetItem()
       if not link then return RunOtherScripts(self, ...) end
 
-      local _, _, _, _, _, _, _, _, _, _, _, itemTypeId, itemSubTypeId = C_Item_GetItemInfo(link)
+      local _, _, _, _, _, _, _, _, _, _, itemSellPrice, itemTypeId, itemSubTypeId = C_Item_GetItemInfo(link)
 
       -- Non recipe items are no problem, because only one call of OnTooltipSetItem()
-      if itemTypeId ~= LE_ITEM_CLASS_RECIPE or itemSubTypeId == LE_ITEM_RECIPE_BOOK then
+      if itemTypeId ~= ITEMCLASS_RECIPE or itemSubTypeId == ITEMSUBCLASS_RECIPE_BOOK then
         AddSellPrice(self)
+        return RunOtherScripts(self, ...)
+      end
+
+      -- hasMoneyFormatter clients (MoP Classic 5.5.4 and any other < 100002 client
+      -- with the native text money formatter) already show the recipe's own sell
+      -- price natively in bag/bank tooltips (at the bottom, after the reagents), so
+      -- we leave those alone to avoid a duplicate.  Recipe items in the MerchantFrame
+      -- get NO native sell price, so we add ours there.  Recipes never stack, so
+      -- there is no per-unit line.
+      if hasMoneyFormatter then
+        local owner = self:GetOwner()
+        local ownerName = owner and owner.GetName and owner:GetName()
+        local isMerchantRecipe = MerchantFrame and MerchantFrame:IsShown()
+              and ownerName and string_find(ownerName, MERCHANT_ITEM_PATTERN)
+
+        if isMerchantRecipe and itemSellPrice and itemSellPrice > 0 then
+          -- A recipe with an embedded product fires OnTooltipSetItem twice in the
+          -- same frame (same GetTime()), with the reagents added only on the 2nd
+          -- call.  We add our sell price on that 2nd call so it lands at the very
+          -- bottom (after the reagents), not mid-tooltip.  The 2nd call is detected
+          -- as "same GetTime() as the previous recipe call" - this needs no recipe
+          -- database, so it works even when LibRecipes has no entry for the recipe.
+          -- (A recipe without a product fires only once, so its single call never
+          -- matches and it is left without our line - acceptable; those are rare at
+          -- vendors and there is no good place to anchor anyway.)
+          local now = GetTime()
+          local isSecondCall = (lastMerchantRecipeTime == now)
+          lastMerchantRecipeTime = now
+          if isSecondCall and not TooltipHasNativeSellPrice(self) then
+            AddNativeMoneyLine(self, itemSellPrice, SELL_PRICE_COLON)
+          end
+        end
         return RunOtherScripts(self, ...)
       end
 
@@ -819,7 +925,7 @@ else
 
       -- Otherwise, find out if this is the first or second call of OnTooltipSetItem().
       -- We recognise this by checking if the last line starts with "Requires"
-      -- preceeded by an empty line.
+      -- preceded by an empty line.
       -- (While at a vendor the moneyFrame is the last line, so we have to check the second last.)
       local secondLastLine = _G[self:GetName().."TextLeft"..(self:NumLines()-1)]:GetText()
       local lastLine = _G[self:GetName().."TextLeft"..self:NumLines()]:GetText()
