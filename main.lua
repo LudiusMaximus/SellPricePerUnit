@@ -126,38 +126,27 @@ local function InsertTooltipLines(tooltip, insertPoint, newLines)
 end
 
 
--- In retail (>= 10.0.2), we add our "Sell Price Per Unit" money line using
--- pre-created TooltipMoneyFrameTemplate frames.
+-- TOOLTIP MONEY RENDERING
 --
--- THE PROBLEM:
--- Tooltip hooks registered via TooltipDataProcessor.AddTooltipPostCall fire
--- inside securecallfunction. When our addon previously called Blizzard's
--- SetTooltipMoney from this context, it ran MoneyFrame_Update in our addon's
--- tainted (insecure) execution context, which called SetWidth()/SetText() on
--- the GameTooltipMoneyFrame's coin buttons - tainting those widgets.
--- GameTooltipMoneyFrame objects persist in _G across tooltip displays.  On a
--- subsequent tooltip, Blizzard's own secure SellPrice handler reuses the same
--- frame and calls MoneyFrame_Update, which does layout math:
---       width = width + goldButton:GetWidth()        (MoneyFrame.lua:307)
--- goldButton:GetWidth() returns a secret ("tainted by SellPricePerUnit")
--- because the button was previously modified from our insecure context.
--- The arithmetic crashes: "attempt to perform arithmetic on a secret number".
+-- As of retail 12.0.7 (and on MoP Classic), the game renders the native sell price
+-- as atlas-coin TEXT (GameTooltip_OnTooltipAddMoney -> MoneyFormatterUtil.FormatMoney),
+-- not a money frame. We match it the same way via AddNativeMoneyLine /
+-- InsertNativeMoneyLine - plain text lines, taint-safe, no money frame needed.
 --
--- THE FIX:
--- We never call SetTooltipMoney, so Blizzard's GameTooltipMoneyFrame stays
--- untouched.  Instead we:
--- * Pre-create our OWN TooltipMoneyFrameTemplate frames at addon LOAD TIME
---   (outside securecallfunction).
--- * Use SPPU_MoneyFrame_Update() which sets each coin button's width from
---   pre-measured values (measured at load time, untainted context), never
---   calling GetWidth()/GetTextWidth()/GetStringWidth() at runtime.
---   Buttons are anchored LEFT-to-RIGHT from the prefix text with SetPoint(),
---   avoiding Blizzard's RIGHT-to-LEFT width-accumulation arithmetic entirely.
--- * InsertMoneyLine inserts a blank line via InsertTooltipLines (for height)
---   and overlays the pre-created frame on it.  Tooltip minimum width is
---   computed from btn.Text:GetStringWidth() on each shown coin button,
---   guarded by issecretvalue().  If any measurement is secret, we fall back
---   to pre-measured component widths (prefix, coin text per digit count, icon).
+-- The pre-created TooltipMoneyFrameTemplate pool and InsertMoneyLine below are now
+-- only a fallback, to match an ACTUAL money frame on the tooltip (older client, or
+-- one added by another addon). They are built in this elaborate pre-measured way
+-- to dodge a taint crash: our retail hook runs inside
+-- TooltipDataProcessor.AddTooltipPostCall -> securecallfunction (insecure), so
+-- calling Blizzard's SetTooltipMoney there taints the shared, _G-persistent coin
+-- buttons (SetText/SetWidth from our insecure context). A later secure tooltip
+-- reuses them and runs `width = width + goldButton:GetWidth()` (MoneyFrame.lua:307);
+-- GetWidth() now returns a secret -> "attempt to perform arithmetic on a secret
+-- number". So instead we pre-create our OWN frames at load time and set each coin
+-- button's width from values measured then (never GetWidth/GetStringWidth at
+-- runtime), anchored LEFT-to-RIGHT from the prefix to avoid Blizzard's RIGHT-to-LEFT
+-- width accumulation. Per-button measurement details are at SPPU_MoneyFrame_Update
+-- / SPPU_ComputeMinWidth below.
 
 -- Pre-create frames at load time using Blizzard's template.
 local SPPU_POOL_SIZE = 3  -- max 2 per tooltip (total + per-unit) + 1 spare
@@ -406,57 +395,45 @@ local function InsertMoneyLine(tooltip, insertPoint, money, prefix)
   tinsert(tooltip.insertedFrames, frame)
 end
 
--- Text-based fallback using AddLine + atlas markup - used for the merchant
--- fast-path (MerchantFrame) where we just append at the end.
-local ICON_SIZE = 13
 
-local function FormatMoneyAtlas(money)
-  local gold = math_floor(money / 10000)
-  local silver = math_floor(money / 100) % 100
-  local copper = money % 100
-
-  local parts = {}
-  if gold > 0 then
-    parts[#parts + 1] = BreakUpLargeNumbers(gold) .. CreateAtlasMarkup("coin-gold", ICON_SIZE, ICON_SIZE)
-  end
-  if silver > 0 then
-    parts[#parts + 1] = silver .. CreateAtlasMarkup("coin-silver", ICON_SIZE, ICON_SIZE)
-  end
-  if copper > 0 or #parts == 0 then
-    parts[#parts + 1] = copper .. CreateAtlasMarkup("coin-copper", ICON_SIZE, ICON_SIZE)
-  end
-
-  return table.concat(parts, " ")
-end
-
-local function AddMoneyLine(tooltip, money, prefix)
-  tooltip:AddLine(prefix .. "   " .. FormatMoneyAtlas(money), 1, 1, 1, false)
-end
-
-
--- True if the tooltip already shows a native "Sell Price:" line.  In MoP Classic
--- the game renders the sell price as plain highlight text (not a money frame), so
--- tooltip.shownMoneyFrames stays nil; we scan the line text to avoid duplicating it.
-local function TooltipHasNativeSellPrice(tooltip)
+-- Line number of the tooltip's native "Sell Price:" line, or nil if absent.  Both
+-- MoP Classic 5.5.4 and retail 12.0.7+ render the sell price as plain highlight
+-- text (not a money frame), so tooltip.shownMoneyFrames stays nil and we have to
+-- scan the line text - both to avoid duplicating it and to anchor our per-unit line.
+local function GetNativeSellPriceLine(tooltip)
   local name = tooltip:GetName()
-  if not name then return false end
-  local prefix = SELL_PRICE_COLON
+  if not name then return nil end
   for i = 1, tooltip:NumLines() do
     local fs = _G[name .. "TextLeft" .. i]
     local text = fs and fs:GetText()
-    if text and string_find(text, prefix, 1, true) == 1 then
-      return true
+    if text and string_find(text, SELL_PRICE_COLON, 1, true) == 1 then
+      return i
     end
   end
-  return false
+  return nil
 end
 
--- Add a money line matching Blizzard's native tooltip sell-price style (high-res
--- atlas coins), reusing the game's own formatter so it lines up with the native
--- line pixel-for-pixel.  Only valid when hasMoneyFormatter.
+local function TooltipHasNativeSellPrice(tooltip)
+  return GetNativeSellPriceLine(tooltip) ~= nil
+end
+
+-- Build a money line string matching Blizzard's native tooltip sell-price style
+-- (highlight font + high-res atlas coins), reusing the game's own formatter so it
+-- lines up with the native line pixel-for-pixel.  Only valid when hasMoneyFormatter.
+local function FormatNativeMoneyText(prefix, money)
+  return string_format("%s %s", prefix, MoneyFormatterUtil.FormatMoney(money, GameTooltipMoneyFormat))
+end
+
+-- Append such a line to the tooltip.
 local function AddNativeMoneyLine(tooltip, money, prefix)
-  local text = string_format("%s %s", prefix, MoneyFormatterUtil.FormatMoney(money, GameTooltipMoneyFormat))
-  tooltip:AddLine(text, HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b, false)
+  tooltip:AddLine(FormatNativeMoneyText(prefix, money), HIGHLIGHT_FONT_COLOR.r, HIGHLIGHT_FONT_COLOR.g, HIGHLIGHT_FONT_COLOR.b, false)
+end
+
+-- Insert such a line after a given line instead of appending.  Uses the taint-safe
+-- InsertTooltipLines (plain AddLine/SetText), so it is safe inside the retail
+-- TooltipDataProcessor securecallfunction context.
+local function InsertNativeMoneyLine(tooltip, insertPoint, money, prefix)
+  InsertTooltipLines(tooltip, insertPoint, {{ text = FormatNativeMoneyText(prefix, money), r = HIGHLIGHT_FONT_COLOR.r, g = HIGHLIGHT_FONT_COLOR.g, b = HIGHLIGHT_FONT_COLOR.b }})
 end
 
 
@@ -555,6 +532,14 @@ local function IsRuneforgeLegendary(guid)
   return C_LegendaryCrafting_IsRuneforgeLegendary(itemLocation)
 end
 
+
+
+-- True if the tooltip is showing an item from the merchant's sell list (a
+-- MerchantItemNItemButton), not a bag item hovered while a vendor is open.
+local function IsMerchantListItem(tooltip)
+  local owner = tooltip:GetOwner()
+  return owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame
+end
 
 
 local function AddSellPrice(tooltip, tooltipData)
@@ -677,6 +662,25 @@ local function AddSellPrice(tooltip, tooltipData)
   local insertAfterLine = nil
 
 
+  -- Retail 12.0.7+ (like MoP Classic) renders the native sell price as an atlas-coin
+  -- TEXT line, not a money frame, so tooltip.shownMoneyFrames stays nil.  When that
+  -- native line is present the game already shows the total, so we must not add our
+  -- own (it would be a duplicate, and in the old money-frame style).  We just add the
+  -- per-unit line for stacks, right after the native line, in the matching style.
+  -- (Items with an actual money frame - older clients, other addons - fall through
+  -- to the legacy path below.)
+  if usesModernTooltipApi and hasMoneyFormatter and not tooltip.shownMoneyFrames
+     and itemSellPrice ~= 0 and not fixUnsellable then
+    local nativeLine = GetNativeSellPriceLine(tooltip)
+    if nativeLine then
+      if stackCount > 1 then
+        InsertNativeMoneyLine(tooltip, nativeLine, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
+      end
+      return
+    end
+  end
+
+
   -- If there is no money frame, we always add one.
   if not tooltip.shownMoneyFrames then
 
@@ -700,14 +704,11 @@ local function AddSellPrice(tooltip, tooltipData)
         -- After 10.0.2 we use GetLastTooltipLine().
         else
 
-          -- If this is an item in the merchant frame, we just add the sell price now,
-          -- Because GetLastTooltipLine() is too unreliable (see above).
-          if merchantFrameOpen then
-            local owner = tooltip:GetOwner()
-            if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
-              tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
-              return
-            end
+          -- If this is an item in the merchant frame, we just add the unsellable
+          -- label now, because GetLastTooltipLine() is too unreliable (see above).
+          if merchantFrameOpen and IsMerchantListItem(tooltip) then
+            tooltip:AddLine(ITEM_UNSELLABLE, 1, 1, 1, false)
+            return
           end
 
           insertUnsellable = true
@@ -748,16 +749,14 @@ local function AddSellPrice(tooltip, tooltipData)
       else
 
         -- If this is an item in the merchant frame, we just add the sell price now,
-        -- Because GetLastTooltipLine() is too unreliable (see above).
-        if merchantFrameOpen then
-          local owner = tooltip:GetOwner()
-          if owner and owner:GetObjectType() == "Button" and owner:GetParent():GetParent() == MerchantFrame then
-            AddMoneyLine(tooltip, itemSellPrice*stackCount, SELL_PRICE_COLON)
-            if stackCount > 1 then
-              AddMoneyLine(tooltip, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
-            end
-            return
+        -- because GetLastTooltipLine() is too unreliable (see above).  Merchant items
+        -- have no native sell price, so we add our own in the game's native text style.
+        if merchantFrameOpen and IsMerchantListItem(tooltip) then
+          AddNativeMoneyLine(tooltip, itemSellPrice*stackCount, SELL_PRICE_COLON)
+          if stackCount > 1 then
+            AddNativeMoneyLine(tooltip, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
           end
+          return
         end
 
         insertNewSellPrice = true
@@ -823,14 +822,19 @@ local function AddSellPrice(tooltip, tooltipData)
       if not usesModernTooltipApi then
         SetTooltipMoney(tooltip, itemSellPrice * stackCount, nil, SELL_PRICE_COLON)
       else
-        InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice * stackCount, SELL_PRICE_COLON)
+        -- Retail renders the native sell price as text, so match that style.
+        InsertNativeMoneyLine(tooltip, insertAfterLine, itemSellPrice * stackCount, SELL_PRICE_COLON)
       end
       insertAfterLine = insertAfterLine + 1
     end
     if stackCount > 1 then
       if not usesModernTooltipApi then
         SetTooltipMoney(tooltip, itemSellPrice, nil, SELL_PRICE_PER_UNIT_COLON)
+      elseif insertNewSellPrice then
+        -- Per-unit follows the native-text total we just added.
+        InsertNativeMoneyLine(tooltip, insertAfterLine, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
       else
+        -- Per-unit follows a detected money frame; match the money-frame style.
         InsertMoneyLine(tooltip, insertAfterLine, itemSellPrice, SELL_PRICE_PER_UNIT_COLON)
       end
     end
