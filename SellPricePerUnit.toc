@@ -1,4 +1,4 @@
-﻿## Interface: 120007
+﻿## Interface: 120100
 ## Version: @project-version@
 ## Title: Sell Price Per Unit
 ## IconAtlas: bags-icon-junk
