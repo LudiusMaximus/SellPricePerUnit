@@ -9,16 +9,20 @@ local string_match = _G.string.match
 local tonumber = _G.tonumber
 
 local GameTooltip = _G.GameTooltip
-local GetBuildInfo = _G.GetBuildInfo
 local GetMouseFoci = _G.GetMouseFoci
 local MerchantFrame = _G.MerchantFrame
 
--- The 4th GetBuildInfo() return is the interface/TOC version (e.g. 50504, 100002,
--- 120005), constant for the session.  100002 (retail 10.0.2) is the cutoff: at or
--- above it the live GameTooltip routes through TooltipDataProcessor; below it (all
--- Classic flavors) we use the legacy OnTooltipSetItem pre-hook.
-local tocVersion = select(4, GetBuildInfo())
-local usesModernTooltipApi = tocVersion >= 100002
+-- Since retail 10.0.2 the GameTooltip routes item tooltips through
+-- TooltipDataProcessor and no longer has an OnTooltipSetItem script type, while all
+-- older Classic flavors still need the legacy OnTooltipSetItem pre-hook.  We
+-- feature-detect instead of comparing interface versions, because WoW Forever
+-- reports a low interface version (16001) but ships the retail-based UI with the
+-- modern tooltip API; a version check would send it down the Classic path, where
+-- GameTooltip:GetScript("OnTooltipSetItem") errors out.
+local TooltipDataProcessor = _G.TooltipDataProcessor
+local usesModernTooltipApi = TooltipDataProcessor ~= nil
+      and TooltipDataProcessor.AddTooltipPostCall ~= nil
+      and Enum ~= nil and Enum.TooltipDataType ~= nil and Enum.TooltipDataType.Item ~= nil
 
 local C_Item_GetItemInfo = _G.C_Item.GetItemInfo
 local C_Item_GetItemLocation = _G.C_Item.GetItemLocation

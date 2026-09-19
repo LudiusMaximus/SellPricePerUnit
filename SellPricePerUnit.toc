@@ -1,13 +1,41 @@
-﻿## Interface: 120100
+﻿## Interface: 120100, 16001, 50504, 20506, 11509
 ## Version: @project-version@
 ## Title: Sell Price Per Unit
-## IconAtlas: bags-icon-junk
+## IconAtlas: bags-icon-junk [AllowLoadGameType mainline, camelot]
+## IconAtlas: bags-junkcoin [AllowLoadGameType mists, tbc, vanilla]
 ## Author: LudiusMaximus
+
 ## Notes: Adds "Sell Price per unit" to the tooltip of item stacks.
+## Notes-deDE: Fügt dem Tooltip von Gegenstandsstapeln den „Verkaufspreis pro Stück“ hinzu.
+## Notes-esES: Añade el "Precio de venta por unidad" a la descripción emergente de las acumulaciones de objetos.
+## Notes-esMX: Agrega el "Precio de venta por unidad" a la descripción emergente de las acumulaciones de objetos.
+## Notes-frFR: Ajoute le « Prix de vente à l'unité » à l'infobulle des piles d'objets.
+## Notes-itIT: Aggiunge il "Prezzo di vendita per unità" al tooltip delle pile di oggetti.
+## Notes-koKR: 아이템 묶음의 툴팁에 "개당 판매 가격"을 추가합니다.
+## Notes-ptBR: Adiciona o "Preço de venda por unidade" à dica de tela das pilhas de itens.
+## Notes-ruRU: Добавляет «Цену продажи за единицу» во всплывающую подсказку стопок предметов.
+## Notes-zhCN: 在物品堆叠的鼠标提示中添加“单件售价”。
+## Notes-zhTW: 在物品堆疊的滑鼠提示中加入「單件售價」。
+
+## Category: Inventory
+## Category-deDE: Inventar
+## Category-esES: Inventario
+## Category-esMX: Inventario
+## Category-frFR: Inventaire
+## Category-itIT: Inventario
+## Category-koKR: 소지품
+## Category-ptBR: Inventário
+## Category-ruRU: Инвентарь
+## Category-zhCN: 物品栏
+## Category-zhTW: 物品欄
+
 ## X-Curse-Project-ID: 335449
 ## X-WoWI-ID: 25216
 ## X-Wago-ID: 56n93aN9
+
 ## X-Donate: PayPal:ludiusmaximus@gmail.com
 ## X-License: The MIT License (MIT)
+
+embeds.xml [AllowLoadGameType mists, tbc, vanilla]
 
 main.lua
