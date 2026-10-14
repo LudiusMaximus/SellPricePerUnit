@@ -1,4 +1,4 @@
-﻿## Interface: 120100, 16001, 50504, 20506, 11509
+﻿## Interface: 120105, 16001, 50504, 20506, 11509
 ## Version: @project-version@
 ## Title: Sell Price Per Unit
 ## IconAtlas: bags-icon-junk [AllowLoadGameType mainline, camelot]
