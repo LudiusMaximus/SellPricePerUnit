@@ -14,15 +14,13 @@ local MerchantFrame = _G.MerchantFrame
 
 -- Since retail 10.0.2 the GameTooltip routes item tooltips through
 -- TooltipDataProcessor and no longer has an OnTooltipSetItem script type, while all
--- older Classic flavors still need the legacy OnTooltipSetItem pre-hook.  We
--- feature-detect instead of comparing interface versions, because WoW Forever
--- reports a low interface version (16001) but ships the retail-based UI with the
--- modern tooltip API; a version check would send it down the Classic path, where
--- GameTooltip:GetScript("OnTooltipSetItem") errors out.
-local TooltipDataProcessor = _G.TooltipDataProcessor
-local usesModernTooltipApi = TooltipDataProcessor ~= nil
-      and TooltipDataProcessor.AddTooltipPostCall ~= nil
-      and Enum ~= nil and Enum.TooltipDataType ~= nil and Enum.TooltipDataType.Item ~= nil
+-- Classic flavors still need the legacy OnTooltipSetItem pre-hook.  We probe for that
+-- script type instead of comparing interface versions, because WoW Forever reports a
+-- low interface version (16001) but ships the retail-based UI; a version check would
+-- send it down the Classic path, where GameTooltip:GetScript("OnTooltipSetItem")
+-- errors out.  Probing for TooltipDataProcessor does not work either: the Classic
+-- clients have it too (shared code), but their GameTooltip never calls it.
+local usesModernTooltipApi = not GameTooltip:HasScript("OnTooltipSetItem")
 
 local C_Item_GetItemInfo = _G.C_Item.GetItemInfo
 local C_Item_GetItemLocation = _G.C_Item.GetItemLocation
